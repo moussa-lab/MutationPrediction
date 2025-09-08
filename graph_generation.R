@@ -1,7 +1,7 @@
 MAT_PATH <- "study_data/COAD2.mat"
 DATASET_NAME <- "COAD2"
 BLOCK_SIZE <- ceiling(12323/6)
-THRESHOLD_DIFF <- 0.75
+THRESHOLD_DIFF <- 0.02
 MIN_COOCC <- 1
 DROP_MIN_ONES <- 0
 PLOT_ENABLE <- TRUE
@@ -67,7 +67,8 @@ for (b in seq_along(idx)) {
   jj <- T@j + 1L
   x <- T@x
   
-  dval <- x * (invn1[jj] - invn1[ii])
+  # (P(i|j) - P(i)) - (P(j|i) - P(j))
+  dval <- x * (invn1[jj] - invn1[ii]) - (n1[ii] - n1[jj]) / as.numeric(m)
   
   sel <- which(dval >= THRESHOLD_DIFF & x >= MIN_COOCC)
   if (!length(sel)) next
