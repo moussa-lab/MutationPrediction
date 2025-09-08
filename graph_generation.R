@@ -1,0 +1,173 @@
+MAT_PATH <- "study_data/COAD2.mat"
+DATASET_NAME <- "COAD2"
+BLOCK_SIZE <- ceiling(12323/6)
+THRESHOLD_DIFF <- 0.75
+MIN_COOCC <- 1
+DROP_MIN_ONES <- 0
+PLOT_ENABLE <- TRUE
+PLOT_MAX_VERTS <- 400
+
+suppressPackageStartupMessages({
+  library(R.matlab)
+  library(Matrix)
+  library(igraph)
+})
+
+set.seed(123)
+
+message("Loading .mat: ", MAT_PATH)
+mat_train_data <- readMat(MAT_PATH)
+
+ds<- mat_train_data[[DATASET_NAME]]
+if (is.null(ds)) stop("Dataset name '", DATASET_NAME, "' not found in ", MAT_PATH)
+
+#COAD: 213, DFCI 321s
+gene_matrix <- as.matrix(ds[[2]])
+rownames(gene_matrix) <- as.character(Reduce(c, ds[[1]]))
+colnames(gene_matrix) <- as.character(Reduce(c, ds[[3]]))
+# Uncomment next line to sample a subset of genes for testing
+gene_matrix <- gene_matrix[sample( 1:dim(gene_matrix)[1],1000, replace = FALSE),]
+
+t0 <- Sys.time()
+
+M <- as(gene_matrix != 0, "lgCMatrix")
+rm(gene_matrix); gc()
+
+n <- nrow(M)
+m <- ncol(M)
+message(sprintf("Matrix size: %d genes x %d samples (sparse)", n, m))
+
+n1 <- Matrix::rowSums(M)
+keep <- which(n1 > 0L & n1 > DROP_MIN_ONES)
+if (length(keep) < n) {
+  message(sprintf("Dropping %d genes with n1 <= %d.", n - length(keep), DROP_MIN_ONES))
+  M <- M[keep, , drop = FALSE]
+  n1 <- n1[keep]
+}
+gene_names <- rownames(M)
+n <- nrow(M)
+invn1 <- 1 / n1
+
+message(sprintf("Kept %d genes with n1 > %d.", n, DROP_MIN_ONES))
+
+idx <- split(seq_len(n), ceiling(seq_len(n) / BLOCK_SIZE))
+
+tM <- t(M)
+
+edges_list <- vector("list", length(idx))
+
+for (b in seq_along(idx)) {
+  I <- idx[[b]]
+  
+  C11_I <- M[I, , drop = FALSE] %*% tM
+  if (length(C11_I@x) == 0L) next
+  
+  T <- as(C11_I, "dgTMatrix")
+  ii <- I[T@i + 1L]
+  jj <- T@j + 1L
+  x <- T@x
+  
+  dval <- x * (invn1[jj] - invn1[ii])
+  
+  sel <- which(dval >= THRESHOLD_DIFF & x >= MIN_COOCC)
+  if (!length(sel)) next
+  
+  edges_list[[b]] <- data.frame(
+    from = gene_names[jj[sel]],
+    to = gene_names[ii[sel]],
+    w_diff = dval[sel],
+    support = x[sel],
+    stringsAsFactors = FALSE
+  )
+}
+
+parts <- Filter(Negate(is.null), edges_list)
+edges_df <- if (length(parts)) {
+  do.call(rbind, parts)
+} else {
+  data.frame(from=character(), to=character(), w_diff=double(), support=double(), stringsAsFactors = FASE)
+}
+
+if (nrow(edges_df) == 0L) {
+  stop("no edges passed the thresholds")
+}
+
+message(sprintf("Built %d candidate directed edges.", nrow(edges_df)))
+
+g <- graph_from_data_frame(edges_df, directed = TRUE, vertices = gene_names)
+
+cat(sprintf("\n[time] initial graph: %.2f s\n", as.numeric(difftime(Sys.time(), t0, units="secs"))))
+t1 <- Sys.time()
+
+g <- simplify(g, remove.multiple = TRUE, remove.loops = TRUE)
+
+key_g <- paste0(tail_of(g, E(g))$name, "->", head_of(g, E(g))$name)
+key_df <- paste0(edges_df$from, "->", edges_df$to)
+
+E(g)$w_diff <- edges_df$w_diff[match(key_g, key_df)]
+E(g)$support <- edges_df$support[match(key_g, key_df)]
+E(g)$w_plot <- pmax(E(g)$w_diff, 1e-6)
+
+message(sprintf("Graph: %d vertices, %d edges (after simplify).", vcount(g), ecount(g)))
+
+make_dag <- function(g) {
+  if (is.dag(g)) return(g)
+  
+  if ("feedback_arc_set" %in% ls("package:igraph")) {
+    fas <- feedback_arc_set(g, weights = E(g)$w_diff)
+    message(sprintf("Removing %d edges via feedback_arc_set to break cycles.", length(fas)))
+    g2 <- delete_edges(g, fas)
+    return(g2)
+  }
+  
+  g
+}
+
+g_dag <- make_dag(g)
+message(sprintf("DAG result: %d vertices, %d edges.", vcount(g_dag), ecount(g_dag)))
+
+longest_path_dag <- function(g) {
+  stopifnot(igraph::is.dag(g))
+  topo <- as.integer(topo_sort(g, mode = "out"))
+  n <- vcount(g)
+  pred <- rep(NA_integer_, n)
+  dist <- rep(-Inf, n)
+  
+  for (v in topo) {
+    if (!is.finite(dist[v])) dist[v] <- 0L
+    nbrs <- as.integer(igraph::neighbors(g, v, mode = "out"))
+    if (length(nbrs) == 0) next
+    for (w in nbrs) {
+      alt <- dist[v] + 1L
+      if (dist[w] < alt) { dist[w] <- alt; pred[w] <- v }
+    }
+  }
+  
+  j <- which.max(dist)
+  if (!length(j) || !is.finite(dist[j])) return(igraph::V(g)$name[0])
+  
+  path <- integer()
+  while (!is.na(j)) {
+    path <- c(j, path); j <- pred[j]
+  }
+  igraph::V(g)$name[path]
+}
+
+lp <- longest_path_dag(g_dag)
+message(sprintf("Longest path length: %d edges, %d vertices", max(0, length(lp)-1), length(lp)))
+if (length(lp)) {
+  preview_k <- 10
+  head_seg <- paste(head(lp, preview_k), collapse = " -> ")
+  tail_seg <- paste(tail(lp, preview_k), collapse = " -> ")
+  if (length(lp) > 2*preview_k) {
+    message("Longest path (head): ", head_seg, " -> ...")
+    message("Longset path (tail): ... -> ", tail_seg)
+  } else {
+    message("Longest path: ", paste(lp, collapse = " -> "))
+  }
+}
+
+message("Done.")
+
+cat(sprintf("\n[time] longest path calc: %.2f s\n", as.numeric(difftime(Sys.time(), t1, units="secs"))))
+cat(sprintf("\n[time] total: %.2f s\n", as.numeric(difftime(Sys.time(), t0, units="secs"))))
