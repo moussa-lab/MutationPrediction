@@ -85,7 +85,7 @@ parts <- Filter(Negate(is.null), edges_list)
 edges_df <- if (length(parts)) {
   do.call(rbind, parts)
 } else {
-  data.frame(from=character(), to=character(), w_diff=double(), support=double(), stringsAsFactors = FASE)
+  data.frame(from=character(), to=character(), w_diff=double(), support=double(), stringsAsFactors = FALSE)
 }
 
 if (nrow(edges_df) == 0L) {
