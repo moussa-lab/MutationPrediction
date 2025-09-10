@@ -235,7 +235,9 @@ writeLines(tag, file.path(sprintf("outputs/%s", tag), sprintf("tag_%s.txt", tag)
 
 # also save newest tag to top level of outputs directory
 writeLines(tag, file.path("outputs", sprintf("latest_tag_%s.txt", DATASET_NAME)))
-
+# and save metadata to csv (both latest and per-run)
+write.csv(run_meta, file.path("outputs", sprintf("latest_meta_%s.csv", DATASET_NAME)), row.names = FALSE)
+write.csv(run_meta, file.path(sprintf("outputs/%s", tag), sprintf("meta_%s.csv", tag)), row.names = FALSE)
 
 message("Done.")
 
