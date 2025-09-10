@@ -1,7 +1,7 @@
 MAT_PATH <- "study_data/COAD2.mat"
 DATASET_NAME <- "COAD2"
 BLOCK_SIZE <- ceiling(12323/6)
-METRIC <- "improvement"
+METRIC <- "improvement"  # "improvement" or "classic"
 THRESHOLD_DIFF <- 0.02
 MIN_COOCC <- 1
 DROP_MIN_ONES <- 0
@@ -146,8 +146,6 @@ make_dag <- function(g) {
 g_dag <- make_dag(g)
 message(sprintf("DAG result: %d vertices, %d edges.", vcount(g_dag), ecount(g_dag)))
 
-if (!dir.exists("outputs")) dir.create("outputs", recursive = TRUE)
-
 fmt_num <- function(x, digits = 6) {
   s <- formatC(x, format = "f", digits = digits, drop0trailing = TRUE)
   s <- sub("\\.", "p", s)
@@ -158,6 +156,8 @@ fmt_id <- function(s) {
 }
 
 tag <- sprintf("%s_metric-%s_thr%s_min%d", DATASET_NAME, fmt_id(METRIC), fmt_num(THRESHOLD_DIFF), as.integer(MIN_COOCC))
+
+if (!dir.exists(sprintf("outputs/%s", tag))) dir.create(sprintf("outputs/%s", tag), recursive = TRUE)
 
 run_meta <- list(
   dataset = DATASET_NAME,
@@ -178,10 +178,10 @@ run_meta <- list(
 attr(g, "params") <- modifyList(run_meta, list(object = "graph_raw"))
 attr(g_dag, "params") <- modifyList(run_meta, list(object = "graph_dag"))
 
-saveRDS(g, file = file.path("outputs", sprintf("%s_graph_raw.rds", tag)))
-saveRDS(g_dag, file = file.path("outputs", sprintf("%s_graph_dag.rds", tag)))
+saveRDS(g, file = file.path(sprintf("outputs/%s", tag), sprintf("graph_raw_%s.rds", tag)))
+saveRDS(g_dag, file = file.path(sprintf("outputs/%s", tag), sprintf("graph_dag_%s.rds", tag)))
 if (exists("edges_df")) {
-  write.csv(edges_df, file = file.path("outputs", sprintf("%s_edges.csv", tag)), row.names = FALSE)
+  write.csv(edges_df, file = file.path(sprintf("outputs/%s", tag), sprintf("edges_%s.csv", tag)), row.names = FALSE)
 }
 
 longest_path_dag <- function(g) {
@@ -229,7 +229,13 @@ lp <- intersect(lp, V(g_dag)$name)
 if (!length(lp)) stop("longest path is empty after intersecting with graph vertices")
 
 attr(lp, "params") <- modifyList(run_meta, list(object = "longest_path_genes", path_length = length(lp)))
-saveRDS(lp, file = file.path("outputs", sprintf("%s_longest_path_genes.rds", tag)))
+saveRDS(lp, file = file.path(sprintf("outputs/%s", tag), sprintf("longest_path_genes_%s.rds", tag)))
+writeLines(lp, file.path(sprintf("outputs/%s", tag), sprintf("longest_path_genes_%s.txt", tag)))
+writeLines(tag, file.path(sprintf("outputs/%s", tag), sprintf("tag_%s.txt", tag)))
+
+# also save newest tag to top level of outputs directory
+writeLines(tag, file.path("outputs", sprintf("latest_tag_%s.txt", DATASET_NAME)))
+
 
 message("Done.")
 
