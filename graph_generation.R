@@ -1,6 +1,7 @@
 MAT_PATH <- "study_data/COAD2.mat"
 DATASET_NAME <- "COAD2"
 BLOCK_SIZE <- ceiling(12323/6)
+METRIC <- "improvement"
 THRESHOLD_DIFF <- 0.02
 MIN_COOCC <- 1
 DROP_MIN_ONES <- 0
@@ -18,15 +19,16 @@ set.seed(123)
 message("Loading .mat: ", MAT_PATH)
 mat_train_data <- readMat(MAT_PATH)
 
-ds<- mat_train_data[[DATASET_NAME]]
-if (is.null(ds)) stop("Dataset name '", DATASET_NAME, "' not found in ", MAT_PATH)
+ds <- mat_train_data[[DATASET_NAME]]
+if (is.null(ds)) stop("Dataset name '", DATASET_NAME,
+                      "' not found in ", MAT_PATH)
 
 #COAD: 213, DFCI 321s
 gene_matrix <- as.matrix(ds[[2]])
 rownames(gene_matrix) <- as.character(Reduce(c, ds[[1]]))
 colnames(gene_matrix) <- as.character(Reduce(c, ds[[3]]))
 # Uncomment next line to sample a subset of genes for testing
-gene_matrix <- gene_matrix[sample( 1:dim(gene_matrix)[1],1000, replace = FALSE),]
+#gene_matrix <- gene_matrix[sample( 1:dim(gene_matrix)[1],1000, replace = FALSE),]
 
 t0 <- Sys.time()
 
@@ -127,6 +129,42 @@ make_dag <- function(g) {
 g_dag <- make_dag(g)
 message(sprintf("DAG result: %d vertices, %d edges.", vcount(g_dag), ecount(g_dag)))
 
+if (!dir.exists("outputs")) dir.create("outputs", recursive = TRUE)
+
+fmt_num <- function(x, digits = 6) {
+  sub("\\.", "p", formatC(x, format = "fg", digits = digits))
+}
+fmt_id <- function(s) {
+  tolower(gsub("[^A-Za-z0-9]+", "-", s))
+}
+
+tag <- sprintf("%s_metric-%s_thr%s_min%d", DATASET_NAME, fmt_id(METRIC), fmt_num(THRESHOLD_DIFF), as.integer(MIN_COOCC))
+
+run_meta <- list(
+  dataset = DATASET_NAME,
+  n_genes = n,
+  n_samples = m,
+  drop_min_ones = DROP_MIN_ONES,
+  block_size = BLOCK_SIZE,
+  metric = METRIC,
+  threshold = THRESHOLD_DIFF,
+  min_coocc = MIN_COOCC,
+  timestamp = as.character(Sys.time()),
+  n_vertices_raw = vcount(g),
+  n_edges_raw = ecount(g),
+  n_vertices_dag = vcount(g_dag),
+  n_edges_dag = ecount(g_dag)
+)
+
+attr(g, "params") <- modifyList(run_meta, list(object = "graph_raw"))
+attr(g_dag, "params") <- modifyList(run_meta, list(object = "graph_dag"))
+
+saveRDS(g, file = file.path("outputs", sprintf("%s_graph_raw.rds", tag)))
+saveRDS(g_dag, file = file.path("outputs", sprintf("%s_graph_dag.rds", tag)))
+if (exists("edges_df")) {
+  write.csv(edges_df, file = file.path("outputs", sprintf("%s_edges.csv", tag)), row.names = FALSE)
+}
+
 longest_path_dag <- function(g) {
   stopifnot(igraph::is.dag(g))
   topo <- as.integer(topo_sort(g, mode = "out"))
@@ -168,7 +206,14 @@ if (length(lp)) {
   }
 }
 
+lp <- intersect(lp, V(g_dag)$name)
+if (!length(lp)) stop("longest path is empty after intersecting with graph vertices")
+
+attr(lp, "params") <- modifyList(run_meta, list(object = "longest_path_genes", path_length = length(lp)))
+saveRDS(lp, file = file.path("outputs", sprintf("%s_longest_path_genes.rds", tag)))
+
 message("Done.")
 
 cat(sprintf("\n[time] longest path calc: %.2f s\n", as.numeric(difftime(Sys.time(), t1, units="secs"))))
 cat(sprintf("\n[time] total: %.2f s\n", as.numeric(difftime(Sys.time(), t0, units="secs"))))
+
