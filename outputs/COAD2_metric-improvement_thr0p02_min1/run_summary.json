@@ -1,0 +1,108 @@
+{
+  "tag": "COAD2_metric-improvement_thr0p02_min1",
+  "timestamp": "2025-09-10 12:24:09",
+  "graph_meta": {
+    "dataset": "COAD2",
+    "n_genes": 12323,
+    "n_samples": 253,
+    "drop_min_ones": 0,
+    "block_size": 2054,
+    "metric": "improvement",
+    "threshold": 0.02,
+    "min_coocc": 1,
+    "timestamp": "2025-09-10 12:00:32",
+    "n_vertices_raw": 12323,
+    "n_edges_raw": 40130144,
+    "n_vertices_dag": 12323,
+    "n_edges_dag": 38604417,
+    "object": "longest_path_genes",
+    "path_length": 74
+  },
+  "lstm": {
+    "num_mutations": 74,
+    "num_train_samples": 755,
+    "num_test_samples": 189
+  },
+  "results": {
+    "confusion_matrix": {
+      "dim": [2, 2],
+      "dimnames": {
+        "Actual": ["Positive", "Negative"],
+        "Predicted": ["Positive", "Negative"]
+      },
+      "data_byrow": {
+        "1": [113, 1168],
+        "2": [101, 12415]
+      }
+    },
+    "metrics_table": {
+      "columns": ["Metric", "Value"],
+      "rows": [
+        {
+          "Metric": "True Positive Rate (Sensitivity, Recall)",
+          "Value": 0.0882123341139735
+        },
+        {
+          "Metric": "False Negative Rate",
+          "Value": 0.911787665886027
+        },
+        {
+          "Metric": "True Negative Rate (Specificity)",
+          "Value": 0.991930329178651
+        },
+        {
+          "Metric": "False Positive Rate",
+          "Value": 0.00806967082134867
+        },
+        {
+          "Metric": "Positive Predictive Value (Precision)",
+          "Value": 0.52803738317757
+        },
+        {
+          "Metric": "Negative Predictive Value",
+          "Value": 0.914010159758522
+        },
+        {
+          "Metric": "False Omission Rate",
+          "Value": 0.0859898402414783
+        },
+        {
+          "Metric": "False Discovery Rate",
+          "Value": 0.47196261682243
+        },
+        {
+          "Metric": "Accuracy",
+          "Value": 0.908023483365949
+        },
+        {
+          "Metric": "Balanced Accuracy",
+          "Value": 0.540071331646312
+        },
+        {
+          "Metric": "F1 Score",
+          "Value": 0.151170568561873
+        },
+        {
+          "Metric": "Matthews Correlation Coefficient",
+          "Value": 0.188220262970965
+        },
+        {
+          "Metric": "Threat Score (CSI, Jaccard Index)",
+          "Value": 0.0817655571635311
+        },
+        {
+          "Metric": "Positive Likelihood Ratio",
+          "Value": 10.9313423145593
+        },
+        {
+          "Metric": "Negative Likelihood Ratio",
+          "Value": 0.919205350481636
+        },
+        {
+          "Metric": "Diagnostic Odds Ratio",
+          "Value": 11.8921656720467
+        }
+      ]
+    }
+  }
+}

@@ -1,6 +1,20 @@
 # OS Files
 .DS_Store
 
+# === Big graph objects ===
+# raw + DAG graph RDS files
+outputs/*/graph_raw_*.rds
+outputs/*/graph_dag_*.rds
+
+# edge lists (can be very large)
+outputs/*/edges_*.csv
+
+# === Trained models ===
+# Keras model checkpoints for each mutation
+outputs/*/models/
+
+.lintr.R
+
 # History files
 .Rhistory
 .Rapp.history

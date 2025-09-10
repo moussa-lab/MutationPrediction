@@ -1,0 +1,49 @@
+Run Summary for TAG: COAD2_metric-improvement_thr0p02_min1
+Timestamp: 2025-09-10 12:24:09
+
+=== Graph Meta (from longest_path_genes) ===
+dataset: COAD2
+n_genes: 12323
+n_samples: 253
+drop_min_ones: 0
+block_size: 2054
+metric: improvement
+threshold: 0.02
+min_coocc: 1
+timestamp: 2025-09-10 12:00:32
+n_vertices_raw: 12323
+n_edges_raw: 40130144
+n_vertices_dag: 12323
+n_edges_dag: 38604417
+object: longest_path_genes
+path_length: 74
+
+=== LSTM Evaluation ===
+Num mutations (longest path): 74
+Num training samples: 755
+Num test samples: 189
+
+Confusion Matrix:
+          Predicted
+Actual     Positive Negative
+  Positive      113     1168
+  Negative      101    12415
+
+Metrics Table:
+                                     Metric        Value
+1  True Positive Rate (Sensitivity, Recall)  0.088212334
+2                       False Negative Rate  0.911787666
+3          True Negative Rate (Specificity)  0.991930329
+4                       False Positive Rate  0.008069671
+5     Positive Predictive Value (Precision)  0.528037383
+6                 Negative Predictive Value  0.914010160
+7                       False Omission Rate  0.085989840
+8                      False Discovery Rate  0.471962617
+9                                  Accuracy  0.908023483
+10                        Balanced Accuracy  0.540071332
+11                                 F1 Score  0.151170569
+12         Matthews Correlation Coefficient  0.188220263
+13        Threat Score (CSI, Jaccard Index)  0.081765557
+14                Positive Likelihood Ratio 10.931342315
+15                Negative Likelihood Ratio  0.919205350
+16                    Diagnostic Odds Ratio 11.892165672

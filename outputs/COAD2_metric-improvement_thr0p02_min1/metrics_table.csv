@@ -1,0 +1,17 @@
+"Metric","Value"
+"True Positive Rate (Sensitivity, Recall)",0.0882123341139735
+"False Negative Rate",0.911787665886027
+"True Negative Rate (Specificity)",0.991930329178651
+"False Positive Rate",0.00806967082134867
+"Positive Predictive Value (Precision)",0.52803738317757
+"Negative Predictive Value",0.914010159758522
+"False Omission Rate",0.0859898402414783
+"False Discovery Rate",0.47196261682243
+"Accuracy",0.908023483365949
+"Balanced Accuracy",0.540071331646312
+"F1 Score",0.151170568561873
+"Matthews Correlation Coefficient",0.188220262970965
+"Threat Score (CSI, Jaccard Index)",0.0817655571635311
+"Positive Likelihood Ratio",10.9313423145593
+"Negative Likelihood Ratio",0.919205350481636
+"Diagnostic Odds Ratio",11.8921656720467
