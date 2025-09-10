@@ -7,6 +7,8 @@ MIN_COOCC <- 1
 DROP_MIN_ONES <- 0
 PLOT_ENABLE <- TRUE
 PLOT_MAX_VERTS <- 400
+USE_SUBSAMPLE <- FALSE
+SUBSAMPLE_SIZE <- 1000
 
 suppressPackageStartupMessages({
   library(R.matlab)
@@ -23,12 +25,14 @@ ds <- mat_train_data[[DATASET_NAME]]
 if (is.null(ds)) stop("Dataset name '", DATASET_NAME,
                       "' not found in ", MAT_PATH)
 
-#COAD: 213, DFCI 321s
+#COAD: 213, DFCI 321 (data, genes, samples)
 gene_matrix <- as.matrix(ds[[2]])
 rownames(gene_matrix) <- as.character(Reduce(c, ds[[1]]))
 colnames(gene_matrix) <- as.character(Reduce(c, ds[[3]]))
-# Uncomment next line to sample a subset of genes for testing
-#gene_matrix <- gene_matrix[sample( 1:dim(gene_matrix)[1],1000, replace = FALSE),]
+
+if (USE_SUBSAMPLE) {
+  gene_matrix <- gene_matrix[sample(1:dim(gene_matrix)[1], SUBSAMPLE_SIZE, replace = FALSE), ]
+}
 
 t0 <- Sys.time()
 
@@ -58,6 +62,20 @@ tM <- t(M)
 
 edges_list <- vector("list", length(idx))
 
+if (METRIC == "improvement") {
+  message("Using metric: improvement")
+  dval_metric <- function(x, ii, jj) {
+    x * (invn1[jj] - invn1[ii]) - (n1[ii] - n1[jj]) / as.numeric(m)
+  }
+} else if (METRIC == "classic") {
+  message("Using metric: classic")
+  dval_metric <- function(x, ii, jj) {
+    x * (invn1[jj] - invn1[ii])
+  }
+} else {
+  stop("unknown metric: ", METRIC)
+}
+
 for (b in seq_along(idx)) {
   I <- idx[[b]]
   
@@ -70,8 +88,7 @@ for (b in seq_along(idx)) {
   x <- T@x
   
   # (P(i|j) - P(i)) - (P(j|i) - P(j))
-  dval <- x * (invn1[jj] - invn1[ii]) - (n1[ii] - n1[jj]) / as.numeric(m)
-  
+  dval <- dval_metric(x, ii, jj)
   sel <- which(dval >= THRESHOLD_DIFF & x >= MIN_COOCC)
   if (!length(sel)) next
   
@@ -132,7 +149,9 @@ message(sprintf("DAG result: %d vertices, %d edges.", vcount(g_dag), ecount(g_da
 if (!dir.exists("outputs")) dir.create("outputs", recursive = TRUE)
 
 fmt_num <- function(x, digits = 6) {
-  sub("\\.", "p", formatC(x, format = "fg", digits = digits))
+  s <- formatC(x, format = "f", digits = digits, drop0trailing = TRUE)
+  s <- sub("\\.", "p", s)
+  gsub("\\s+", "", s)
 }
 fmt_id <- function(s) {
   tolower(gsub("[^A-Za-z0-9]+", "-", s))
