@@ -7,47 +7,69 @@ library(future)
 library(furrr)
 library(progressr)
 
+TAG <- "COAD2_metric-improvement_thr0p02_min1" # set per run
+
+BASE_DIR <- file.path("outputs", TAG)
+MODELS_DIR <- file.path(BASE_DIR, "models")
+LP_PATH <- file.path(BASE_DIR, sprintf("longest_path_genes_%s.rds", TAG))
+
+if (!dir.exists(BASE_DIR)) dir.create(BASE_DIR, recursive = TRUE)
+if(!dir.exists(MODELS_DIR)) dir.create(MODELS_DIR, recursive = TRUE)
+
 handlers(global = TRUE)
 handlers(list(handler_txtprogressbar()))
 
-# ---------------------
-# Load Data
-# ---------------------
-
 set.seed(123)
 
-mat_train_data <- readMat("study_data/COAD2.mat")
-COAD2_unshuffled <- as.matrix(mat_train_data$COAD2[[2]]) # Training data
-#COAD2 <- COAD2_unshuffled[, sample(ncol(COAD2_unshuffled))]
+# helpers
+read_named_mat <- function(mat_path, ds_name, data_genes_samples = c(1,2,3)) {
+  x <- readMat(mat_path)
+  ds <- x[[ds_name]]
+  if (is.null(ds)) stop("Dataset name '", ds_name, "' not found in ", mat_path)
+  mat <- as.matrix(ds[[data_genes_samples[1]]])
+  rownames(mat) <- as.character(Reduce(c, ds[[data_genes_samples[2]]]))
+  colnames(mat) <- as.character(Reduce(c, ds[[data_genes_samples[3]]]))
+  mat
+}
 
-DFCI2_test_data <- readMat("study_data/DFCI2.mat")  # Test data
-DFCI2_unshuffled <- as.matrix(DFCI2_test_data$DFCI2[[3]])  # Test mutation matrix
-#DFCI2 <- DFCI2_unshuffled[, sample(ncol(DFCI2_unshuffled))]
+# load longest-path ordering
+lp <- readRDS(LP_PATH)  # from graph_generation.R output (saved in outputs/<TAG>/)
+lp_meta <- attr(lp, "params")
+print(lp_meta)
 
-MGI2_test_data <- readMat("study_data/MGI2.mat")
-MGI2_unshuffled <- as.matrix(MGI2_test_data$MGI2[[3]])
-#MGI2 <- MGI2_unshuffled[, sample(ncol(MGI2_unshuffled))]
+# load matrices
+COAD2 <- read_named_mat("study_data/COAD2.mat", "COAD2", c(2, 1, 3))
+DFCI2 <- read_named_mat("study_data/DFCI2.mat", "DFCI2", c(3, 2, 1))
+MGI2  <- read_named_mat("study_data/MGI2.mat", "MGI2",  c(3, 2, 1))
 
-combined_data_unshuffled <- cbind(COAD2_unshuffled, DFCI2_unshuffled, MGI2_unshuffled)
-combined_data <- combined_data_unshuffled[, sample(ncol(combined_data_unshuffled))]
+combined_data_unshuffled <- cbind(COAD2, DFCI2, MGI2)
+rm(COAD2, DFCI2, MGI2); gc()
 
+# subset to longest path and preserve order
+path_genes_in_data <- intersect(lp, rownames(combined_data_unshuffled))
+if (length(path_genes_in_data) < 2) stop("Not enough genes from longest path in data")
+
+ordered_combined <- combined_data_unshuffled[path_genes_in_data, , drop = FALSE]
+rm(combined_data_unshuffled); gc()
+
+# shuffle samples only
+combined_data <- ordered_combined[, sample(ncol(ordered_combined)), drop = FALSE]
+rm(ordered_combined); gc()
+
+# split
 total_samples <- ncol(combined_data)
-train_sample_size <- floor(0.9 * total_samples)
+train_sample_size <- floor(0.8 * total_samples)
+train_indices <- sample(seq_len(total_samples), size = train_sample_size, replace = FALSE)
+test_indices  <- setdiff(seq_len(total_samples), train_indices)
 
-train_indices <- sample(seq_len(total_samples), size = train_sample_size)
-test_indices <- setdiff(seq_len(total_samples), train_indices)
+TrainingSet <- combined_data[, train_indices, drop = FALSE]
+TestSet     <- combined_data[, test_indices,  drop = FALSE]
+rm(combined_data); gc()
 
-TrainingSet <- combined_data[, train_indices]
-TestSet <- combined_data[, test_indices]
+print(head(TrainingSet)[, 1:5])
+print(head(TestSet)[, 1:5])
 
-#TrainingSet <- DFCI2_unshuffled[, sample(ncol(DFCI2_unshuffled))]
-#TestSet <- COAD2_unshuffled[, sample(ncol(COAD2_unshuffled))]
-
-if (!dir.exists("new4_trained_models")) dir.create("new4_trained_models")
-
-# ---------------------
-# Train LSTM Function
-# ---------------------
+# LSTM + batching
 TrainLSTM <- function(t, data, labels) {
   clear_session()
   # Prepare data using mutations from t+1 to the last mutation (rows above t)
@@ -81,7 +103,8 @@ TrainLSTM <- function(t, data, labels) {
     verbose = 1
   )
   
-  model |> save_model(paste0("new4_trained_models/model_t_", t, ".keras"), overwrite = TRUE)
+  save_path <- file.path(MODELS_DIR, sprintf("model_t_%d.keras", t))
+  model |> save_model(save_path, overwrite = TRUE)
   
   rm(model, reshaped_data, sequences, data, early_stopping)
   gc()
@@ -101,14 +124,14 @@ train_all_models_in_batches <- function(TrainingSet, num_mutations, retrain,
   for (batch_vec in batch_indices) {
     # Start a fresh plan for each batch to ensure memory cleanup
     plan(sequential)
-    plan(multisession, workers = min(detectCores() - 1, 24))
+    plan(multisession, workers = min(detectCores() - 1, 4))
     on.exit(plan(sequential), add = TRUE)
     
     with_progress({
       p <- progressor(steps = length(batch_vec))
       future_map(batch_vec, ~{
         p(sprintf("Training model for mutation %d", .x))
-        model_file <- paste0("new4_trained_models/model_t_", .x, ".keras")
+        model_file <- file.path(MODELS_DIR, sprintf("model_t_%d.keras", .x))
         training_labels <- TrainingSet[.x, ]
         
         if (retrain || !file.exists(model_file)) {
@@ -137,12 +160,12 @@ compute_accuracy_matrix_parallel <- function(num_mutations, TrainingSet, TestSet
     p <- progressor(steps = length(batch_indices))
     for (batch_vec in batch_indices) {
       plan(sequential)
-      plan(multisession, workers = min(detectCores() - 1, 24))
+      plan(multisession, workers = min(detectCores() - 1, 4))
       on.exit(plan(sequential), add = TRUE)
       
       batch_results <- future_map(batch_vec, function(t) {
         clear_session()
-        model_file <- paste0("new4_trained_models/model_t_", t, ".keras")
+        model_file <- file.path(MODELS_DIR, sprintf("model_t_%d.keras", t))
         accuracy <- NULL
         
         # Ensure the model is valid and retrain if necessary
@@ -205,14 +228,15 @@ compute_accuracy_matrix_parallel <- function(num_mutations, TrainingSet, TestSet
 # Main Execution
 # ---------------------
 apply_models_to_test_set_batch <- function(retrain = FALSE) {
-  num_mutations <- 1000  # for testing
-  #num_mutations <- nrow(COAD2)
+  #num_mutations <- 1000  # for testing
+  num_mutations <- nrow(TrainingSet)
   
   # Train all models in parallel batches
-  train_all_models_in_batches(TrainingSet, num_mutations, retrain, batch_size = 48)
+  train_all_models_in_batches(TrainingSet, num_mutations, retrain, batch_size = 8)
   
   # Compute accuracy matrix
-  accuracy_matrix <- compute_accuracy_matrix_parallel(num_mutations, TrainingSet, TestSet, batch_size = 32)
+  accuracy_matrix <- compute_accuracy_matrix_parallel(num_mutations, TrainingSet, TestSet, batch_size = 8)
+  saveRDS(accuracy_matrix, file.path(BASE_DIR, "accuracy_matrix.rds"))
   return(accuracy_matrix)
 }
 
@@ -221,6 +245,7 @@ apply_models_to_test_set_batch <- function(retrain = FALSE) {
 # ---------------------
 accuracy_matrix <- apply_models_to_test_set_batch(retrain = TRUE)
 
+png(file.path(BASE_DIR, "accuracy_heatmap.png"), width = 1200, height = 12000, res = 180)
 pheatmap(
   accuracy_matrix,
   cluster_rows = FALSE,
@@ -230,6 +255,7 @@ pheatmap(
   legend_labels = c("Incorrect", "Correct"),
   main = "Prediction Accuracy Heatmap"
 )
+dev.off()
 
 # Generate confusion matrix from accuracy_matrix
 generate_confusion_matrix <- function(accuracy_matrix, TestSet) {
@@ -338,3 +364,87 @@ confusion_matrix <- generate_confusion_matrix(accuracy_matrix, TestSet)
 
 metrics_table <- generate_metrics_table(confusion_matrix)
 print(metrics_table)
+
+write.csv(confusion_matrix, file.path(BASE_DIR, "confusion_matrix.csv"), row.names = TRUE)
+write.csv(metrics_table, file.path(BASE_DIR, "metrics_table.csv"), row.names = FALSE)
+
+summary_path <- file.path(BASE_DIR, "run_summary.txt")
+con <- file(summary_path, "wt")
+writeLines(c(
+  sprintf("Run Summary for TAG: %s", TAG),
+  sprintf("Timestamp: %s", Sys.time()),
+  "",
+  "=== Graph Meta (from longest_path_genes) ==="
+), con)
+
+# If meta exists from graph step
+if (!is.null(lp_meta)) {
+  for (nm in names(lp_meta)) {
+    writeLines(sprintf("%s: %s", nm, lp_meta[[nm]]), con)
+  }
+} else {
+  writeLines("No meta info found in longest_path_genes RDS.", con)
+}
+
+writeLines(c(
+  "",
+  "=== LSTM Evaluation ===",
+  sprintf("Num mutations (longest path): %d", nrow(TrainingSet)),
+  sprintf("Num training samples: %d", ncol(TrainingSet)),
+  sprintf("Num test samples: %d", ncol(TestSet)),
+  "",
+  "Confusion Matrix:"
+), con)
+
+capture.output(print(confusion_matrix), file = con)
+
+writeLines(c("", "Metrics Table:"), con)
+capture.output(print(metrics_table), file = con)
+
+close(con)
+
+message(sprintf("Saved run summary to %s", summary_path))
+
+# ====== RUN SUMMARY (JSON sidecar) ======
+# Ensure jsonlite is available (lightweight; only used here)
+if (!requireNamespace("jsonlite", quietly = TRUE)) {
+  install.packages("jsonlite", repos = "https://cloud.r-project.org")
+}
+
+# Helper: encode a matrix (with dimnames) as a JSON-friendly list
+matrix_to_list <- function(mat) {
+  list(
+    dim = dim(mat),
+    dimnames = dimnames(mat),
+    data_byrow = split(as.vector(t(mat)), rep(seq_len(nrow(mat)), each = ncol(mat)))
+  )
+}
+
+json_payload <- list(
+  tag = TAG,
+  timestamp = as.character(Sys.time()),
+  graph_meta = if (!is.null(lp_meta)) lp_meta else NULL,
+  lstm = list(
+    num_mutations = nrow(TrainingSet),
+    num_train_samples = ncol(TrainingSet),
+    num_test_samples  = ncol(TestSet)
+  ),
+  results = list(
+    confusion_matrix = matrix_to_list(confusion_matrix),
+    metrics_table = list(
+      columns = colnames(metrics_table),
+      rows = lapply(seq_len(nrow(metrics_table)), function(i) as.list(metrics_table[i, , drop = FALSE]))
+    )
+  )
+)
+
+jsonlite::write_json(
+  json_payload,
+  path = file.path(BASE_DIR, "run_summary.json"),
+  pretty = TRUE,
+  auto_unbox = TRUE,
+  na = "null",
+  digits = NA
+)
+
+message(sprintf("Saved JSON sidecar to %s", file.path(BASE_DIR, "run_summary.json")))
