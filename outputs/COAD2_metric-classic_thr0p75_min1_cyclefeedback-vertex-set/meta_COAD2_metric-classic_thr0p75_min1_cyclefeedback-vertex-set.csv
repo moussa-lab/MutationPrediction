@@ -1,2 +1,2 @@
 "dataset","n_genes","n_samples","drop_min_ones","block_size","metric","threshold","min_coocc","cycle_break_method","timestamp","n_vertices_raw","n_edges_raw","n_vertices_dag","n_edges_dag"
-"COAD2",12323,253,0,2054,"classic_inv",0.5,1,"feedback_arc_set","2025-10-10 12:03:29.455888",12323,2544285,12323,2544285
+"COAD2",12323,253,0,2054,"classic",0.75,1,"feedback_vertex_set","2025-09-17 12:41:51.287501",12323,1254048,12323,1254048
