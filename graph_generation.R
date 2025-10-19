@@ -325,20 +325,6 @@ save_topo <- function(g, tag) {
     topo_names
 }
 
-# lp <- longest_path_dag(g_dag)
-# message(sprintf("Longest path length: %d edges, %d vertices", max(0, length(lp) - 1), length(lp)))
-# if (length(lp)) {
-#     preview_k <- 10
-#     head_seg <- paste(head(lp, preview_k), collapse = " -> ")
-#     tail_seg <- paste(tail(lp, preview_k), collapse = " -> ")
-#     if (length(lp) > 2 * preview_k) {
-#         message("Longest path (head): ", head_seg, " -> ...")
-#         message("Longset path (tail): ... -> ", tail_seg)
-#     } else {
-#         message("Longest path: ", paste(lp, collapse = " -> "))
-#     }
-# }
-
 message("Calculating longest paths in DAG (unweighted)...")
 lp_edges <- longest_path_dag(g_dag)
 message(sprintf(
@@ -346,13 +332,13 @@ message(sprintf(
     max(0, length(lp_edges) - 1), length(lp_edges)
 ))
 
-# message("Calculating longest paths in DAG (weighted)...")
-# lp_weighted <- longest_path_dag_weighted(g_dag, "w_path")
-# message(sprintf(
-#     "LP (weighted): %.4f total weight over %d edges",
-#     sum_path_weight(g_dag, lp_weighted, "w_path"),
-#     max(0, length(lp_weighted) - 1)
-# ))
+message("Calculating longest paths in DAG (weighted)...")
+lp_weighted <- longest_path_dag_weighted(g_dag, "w_path")
+message(sprintf(
+    "LP (weighted): %.4f total weight over %d edges",
+    sum_path_weight(g_dag, lp_weighted, "w_path"),
+    max(0, length(lp_weighted) - 1)
+))
 
 # Save both
 if (length(lp_edges)) {
@@ -360,15 +346,16 @@ if (length(lp_edges)) {
     saveRDS(lp_edges, file.path(sprintf("outputs/%s", tag), sprintf("longest_path_edges_%s.rds", tag)))
     writeLines(lp_edges, file.path(sprintf("outputs/%s", tag), sprintf("longest_path_edges_%s.txt", tag)))
 }
-# if (length(lp_weighted)) {
-#     attr(lp_weighted, "params") <- modifyList(run_meta, list(
-#         object = "longest_path_weighted",
-#         weight_attr = "w_path",
-#         total_weight = sum_path_weight(g_dag, lp_weighted)
-#     ))
-#     saveRDS(lp_weighted, file.path(sprintf("outputs/%s", tag), sprintf("longest_path_weighted_%s.rds", tag)))
-#     writeLines(lp_weighted, file.path(sprintf("outputs/%s", tag), sprintf("longest_path_weighted_%s.txt", tag)))
-# }
+if (length(lp_weighted)) {
+    attr(lp_weighted, "params") <- modifyList(run_meta, list(
+        object = "longest_path_weighted",
+        weight_attr = "w_path",
+        total_weight = sum_path_weight(g_dag, lp_weighted)
+    ))
+    saveRDS(lp_weighted, file.path(sprintf("outputs/%s", tag), sprintf("longest_path_weighted_%s.rds", tag)))
+    writeLines(lp_weighted, file.path(sprintf("outputs/%s", tag), sprintf("longest_path_weighted_%s.txt", tag)))
+}
+
 writeLines(tag, file.path(sprintf("outputs/%s", tag), sprintf("tag_%s.txt", tag)))
 
 # also save newest tag to top level of outputs directory
