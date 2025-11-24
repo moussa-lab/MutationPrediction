@@ -1,52 +1,56 @@
 Run Summary for TAG: COAD2_metric-improvement_thr0p02_min1_cyclefeedback-arc-set
-Timestamp: 2025-09-28 21:59:54.239097
+Timestamp: 2025-10-29 16:30:02
 
-=== Graph Meta (from longest_path_genes) ===
-dataset: COAD2
-n_genes: 12323
-n_samples: 253
-drop_min_ones: 0
-block_size: 2054
-metric: improvement
-threshold: 0.02
-min_coocc: 1
-cycle_break_method: feedback_arc_set
-timestamp: 2025-09-28 17:24:36
-n_vertices_raw: 12323
-n_edges_raw: 40130144
-n_vertices_dag: 12323
-n_edges_dag: 38604417
-object: longest_path_weighted
-weight_attr: w_path
-total_weight: 7.20086265933061
-Cycle breaking method: feedback_arc_set
+=== Graph Meta ===
+(not available — LP sourced from TXT or attributes not accessible)
 
 === LSTM Evaluation ===
-Num mutations (longest path): 51
+Num mutations (longest path): 74
 Num training samples: 755
 Num test samples: 189
 
-Confusion Matrix:
-          Predicted
-Actual     Positive Negative
-  Positive       65      898
-  Negative       65     8422
+Custom Confusion Matrix (rows: Actual [+,-], cols: Pred [+,-]):
+[[  142  1057]
+ [  106 12492]]
 
-Metrics Table:
-                                     Metric       Value
-1  True Positive Rate (Sensitivity, Recall) 0.067497404
-2                       False Negative Rate 0.932502596
-3          True Negative Rate (Specificity) 0.992341228
-4                       False Positive Rate 0.007658772
-5     Positive Predictive Value (Precision) 0.500000000
-6                 Negative Predictive Value 0.903648069
-7                       False Omission Rate 0.096351931
-8                      False Discovery Rate 0.500000000
-9                                  Accuracy 0.898095238
-10                        Balanced Accuracy 0.529919316
-11                                 F1 Score 0.118938701
-12         Matthews Correlation Coefficient 0.155414762
-13        Threat Score (CSI, Jaccard Index) 0.063229572
-14                Positive Likelihood Ratio 8.813084112
-15                Negative Likelihood Ratio 0.939699541
-16                    Diagnostic Odds Ratio 9.378619154
+Custom Metrics Table:
+                                  Metric     Value
+True Positive Rate (Sensitivity, Recall)  0.118432
+                     False Negative Rate  0.881568
+        True Negative Rate (Specificity)  0.991586
+                     False Positive Rate  0.008414
+   Positive Predictive Value (Precision)  0.572581
+               Negative Predictive Value  0.921987
+                     False Omission Rate  0.078013
+                    False Discovery Rate  0.427419
+                                Accuracy  0.915706
+                       Balanced Accuracy  0.555009
+                                F1 Score  0.196268
+        Matthews Correlation Coefficient  0.233262
+       Threat Score (CSI, Jaccard Index)  0.108812
+               Positive Likelihood Ratio 14.075535
+               Negative Likelihood Ratio  0.889048
+                   Diagnostic Odds Ratio 15.832134
+
+Standard Confusion Matrix (rows: Actual [+,-], cols: Pred [+,-]):
+[[  142  1057]
+ [  106 12492]]
+
+Standard Metrics Table:
+                                  Metric     Value
+True Positive Rate (Sensitivity, Recall)  0.118432
+                     False Negative Rate  0.881568
+        True Negative Rate (Specificity)  0.991586
+                     False Positive Rate  0.008414
+   Positive Predictive Value (Precision)  0.572581
+               Negative Predictive Value  0.921987
+                     False Omission Rate  0.078013
+                    False Discovery Rate  0.427419
+                                Accuracy  0.915706
+                       Balanced Accuracy  0.555009
+                                F1 Score  0.196268
+        Matthews Correlation Coefficient  0.233262
+       Threat Score (CSI, Jaccard Index)  0.108812
+               Positive Likelihood Ratio 14.075535
+               Negative Likelihood Ratio  0.889048
+                   Diagnostic Odds Ratio 15.832134

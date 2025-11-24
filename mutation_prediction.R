@@ -11,7 +11,8 @@ TAG <- "COAD2_metric-improvement_thr0p02_min1_cyclefeedback-arc-set" # set per r
 
 BASE_DIR <- file.path("outputs", TAG)
 MODELS_DIR <- file.path(BASE_DIR, "models")
-LP_PATH <- file.path(BASE_DIR, sprintf("longest_path_weighted_%s.rds", TAG))
+LP_PATH <- file.path(BASE_DIR, sprintf("longest_path_edges_%s.rds", TAG))
+# LP_PATH <- file.path("MRM_order.txt")
 
 if (!dir.exists(BASE_DIR)) dir.create(BASE_DIR, recursive = TRUE)
 if (!dir.exists(MODELS_DIR)) dir.create(MODELS_DIR, recursive = TRUE)
@@ -34,6 +35,10 @@ read_named_mat <- function(mat_path, ds_name, data_genes_samples = c(1, 2, 3)) {
 
 # load longest-path ordering
 lp <- readRDS(LP_PATH) # from graph_generation.R output (saved in outputs/<TAG>/)
+# lp <- readLines(LP_PATH)
+# shuffle lp
+# lp <- sample(lp)
+print(head(lp))
 lp_meta <- attr(lp, "params")
 print(lp_meta)
 
@@ -89,32 +94,28 @@ TrainLSTM <- function(t, data, labels) {
 
   # Define and compile model
   model <- keras_model_sequential() %>%
-    layer_lstm(units = 32, input_shape = c(n, 1), return_sequences = FALSE) %>%
+    layer_lstm(units = 5, input_shape = c(n, 1), return_sequences = FALSE) %>%
     layer_dense(units = 1, activation = "sigmoid")
 
   model %>% compile(
     optimizer = "adam",
-    loss = loss_binary_focal_crossentropy(gamma = 2.0, alpha = 0.75),
+    loss = "binary_focal_crossentropy",
     metrics = list("accuracy", "recall", "precision")
   )
-
-  cb <- callback_early_stopping(monitor = "val_pr_auc", patience = 3, mode = "max", restore_best_weights = TRUE)
 
   # Params from Auslander paper
   model %>% fit(
     x = reshaped_data,
     y = labels,
-    epochs = 50,
+    epochs = 10,
     batch_size = 27,
-    verbose = 1,
-    callbacks = list(cb),
-    validation_split = 0.2
+    verbose = 1
   )
 
   save_path <- file.path(MODELS_DIR, sprintf("model_t_%d.keras", t))
   model |> save_model(save_path, overwrite = TRUE)
 
-  rm(model, reshaped_data, sequences, data)
+  rm(model, reshaped_data, sequences, data, early_stopping)
   gc()
 }
 

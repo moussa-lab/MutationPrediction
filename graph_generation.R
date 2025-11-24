@@ -1,9 +1,14 @@
 MAT_PATH <- "study_data/COAD2.mat"
 DATASET_NAME <- "COAD2"
+CSV_PATH <- "combined_union.csv"
+USE_CSV <- TRUE
+
 BLOCK_SIZE <- ceiling(12323 / 6)
 METRIC <- "classic_inv" # "improvement" or "classic"
-THRESHOLD_DIFF <- 0.5
+THRESHOLD_DIFF <- 0.02
 MIN_COOCC <- 1
+PROB_MIN <- 0.02
+WEIGHT_MIN <- THRESHOLD_DIFF
 DROP_MIN_ONES <- 0
 # PLOT_ENABLE <- TRUE
 # PLOT_MAX_VERTS <- 400
@@ -20,21 +25,28 @@ suppressPackageStartupMessages({
 
 set.seed(123)
 
-message("Loading .mat: ", MAT_PATH)
-mat_train_data <- readMat(MAT_PATH)
+if (USE_CSV) {
+    message("Loading CSV: ", CSV_PATH)
+    df <- read.csv(CSV_PATH, row.names = 1, check.names = FALSE)
+    gene_matrix <- as.matrix(df)
+    storage.mode(gene_matrix) <- "numeric"
+    gene_matrix[is.na(gene_matrix)] <- 0
+    # Row/col names already come from the CSV
+} else {
+    message("Loading .mat: ", MAT_PATH)
+    mat_train_data <- readMat(MAT_PATH)
 
-ds <- mat_train_data[[DATASET_NAME]]
-if (is.null(ds)) {
-    stop(
-        "Dataset name '", DATASET_NAME,
-        "' not found in ", MAT_PATH
-    )
+    ds <- mat_train_data[[DATASET_NAME]]
+    if (is.null(ds)) {
+        stop("Dataset name '", DATASET_NAME, "' not found in ", MAT_PATH)
+    }
+
+    # COAD: 213, DFCI 321 (data, genes, samples)
+    gene_matrix <- as.matrix(ds[[2]])
+    rownames(gene_matrix) <- as.character(Reduce(c, ds[[1]]))
+    colnames(gene_matrix) <- as.character(Reduce(c, ds[[3]]))
 }
 
-# COAD: 213, DFCI 321 (data, genes, samples)
-gene_matrix <- as.matrix(ds[[2]])
-rownames(gene_matrix) <- as.character(Reduce(c, ds[[1]]))
-colnames(gene_matrix) <- as.character(Reduce(c, ds[[3]]))
 
 if (USE_SUBSAMPLE) {
     gene_matrix <- gene_matrix[sample(1:dim(gene_matrix)[1], SUBSAMPLE_SIZE, replace = FALSE), ]
@@ -42,7 +54,7 @@ if (USE_SUBSAMPLE) {
 
 t0 <- Sys.time()
 
-M <- as(gene_matrix != 0, "lgCMatrix")
+M <- Matrix::Matrix(gene_matrix != 0, sparse = TRUE)
 rm(gene_matrix)
 gc()
 
@@ -67,26 +79,8 @@ idx <- split(seq_len(n), ceiling(seq_len(n) / BLOCK_SIZE))
 
 tM <- t(M)
 
+message("Using asymmetric conditional-prob metric")
 edges_list <- vector("list", length(idx))
-
-if (METRIC == "improvement") {
-    message("Using metric: improvement")
-    dval_metric <- function(x, ii, jj) {
-        x * (invn1[jj] - invn1[ii]) - (n1[ii] - n1[jj]) / as.numeric(m)
-    }
-} else if (METRIC == "classic") {
-    message("Using metric: classic")
-    dval_metric <- function(x, ii, jj) {
-        x * (invn1[jj] - invn1[ii])
-    }
-} else if (METRIC == "classic_inv") {
-    message("Using metric: classic")
-    dval_metric <- function(x, ii, jj) {
-        x * (invn1[ii] - invn1[jj])
-    }
-} else {
-    stop("unknown metric: ", METRIC)
-}
 
 for (b in seq_along(idx)) {
     I <- idx[[b]]
@@ -99,15 +93,25 @@ for (b in seq_along(idx)) {
     jj <- T@j + 1L
     x <- T@x
 
-    # (P(i|j) - P(i)) - (P(j|i) - P(j))
-    dval <- dval_metric(x, ii, jj)
-    sel <- which(dval >= THRESHOLD_DIFF & x >= MIN_COOCC)
+    Pij <- x / n1[jj]
+    Pji <- x / n1[ii]
+
+    if (PROB_MIN > 0) {
+        Pij[Pij < PROB_MIN] <- 0
+        Pji[Pji < PROB_MIN] <- 0
+    }
+
+    dir_mask <- Pij > Pji
+
+    w_abs <- abs(Pij - Pji)
+
+    sel <- which(dir_mask & (w_abs >= WEIGHT_MIN) & (x >= MIN_COOCC))
     if (!length(sel)) next
 
     edges_list[[b]] <- data.frame(
-        from = gene_names[jj[sel]],
-        to = gene_names[ii[sel]],
-        w_diff = dval[sel],
+        from = gene_names[ii[sel]],
+        to = gene_names[jj[sel]],
+        w_diff = w_abs[sel],
         support = x[sel],
         stringsAsFactors = FALSE
     )
