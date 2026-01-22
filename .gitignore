@@ -1,5 +1,16 @@
+*
+*/
+!study_data/*
+!graph_generation.R
+!mutation_prediction.py
+
+
 # OS Files
 .DS_Store
+
+# Python
+__pycache__/
+*.venv/*
 
 # === Big graph objects ===
 # raw + DAG graph RDS files
