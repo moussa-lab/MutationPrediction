@@ -3,6 +3,10 @@
 !study_data/*
 !graph_generation.R
 !mutation_prediction.py
+!plot_mutation_heatmap.py
+!plot_graph_pathway.R
+!README.md
+!LICENSE
 
 
 # OS Files
