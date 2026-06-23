@@ -1,12 +1,32 @@
 *
 */
-!study_data/*
+
+!study_data/
+!study_data/COAD2.mat
+!study_data/DFCI2.mat
+!study_data/MGI2.mat
+!study_data/combined_union.csv.zip
+!study_data/stage_i.csv
+!study_data/stage_ii.csv
+!study_data/stage_iii.csv
+!study_data/stage_iv.csv
+!study_data/stage_unknown.csv
+!study_data/staged_only.csv
+!study_data/louvain_largest_community.csv
+!study_data/louvain_second_largest_community.csv
+
 !graph_generation.R
 !mutation_prediction.py
 !plot_mutation_heatmap.py
 !plot_graph_pathway.R
 !README.md
 !LICENSE
+!bootstrap/
+!bootstrap/README.md
+!bootstrap/*.R
+!bootstrap/coad2(in).csv
+bootstrap/bootstrap_datasets/
+bootstrap/data/
 
 
 # OS Files

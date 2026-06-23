@@ -1,3 +1,8 @@
+# Authors:
+#   Collin Sumrell, School of Computer Science, University of Oklahoma, Norman, OK, USA
+#   Marmar Moussa, School of Computer Science and Stephenson School of 
+#       Biomedical Engineering, University of Oklahoma, Norman, OK, USA
+
 import os, json, time, argparse, random
 from pathlib import Path
 from typing import List, Tuple, Optional

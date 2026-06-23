@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+# Authors:
+#   Collin Sumrell, School of Computer Science, University of Oklahoma, Norman, OK, USA
+#   Marmar Moussa, School of Computer Science and Stephenson School of 
+#       Biomedical Engineering, University of Oklahoma, Norman, OK, USA
+
 import argparse
 import os
 import sys
