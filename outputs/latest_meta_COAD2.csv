@@ -1,2 +1,2 @@
-"dataset","n_genes","n_samples","drop_min_ones","block_size","metric","threshold","min_coocc","cycle_break_method","timestamp","n_vertices_raw","n_edges_raw","n_vertices_dag","n_edges_dag"
-"COAD2",12323,253,0,2054,"classic_inv",0.05,1,"feedback_arc_set","2025-11-23 18:54:18.869956",12323,35797159,12323,35797159
+"dataset","n_genes","n_samples","drop_min_ones","block_size","metric","threshold","min_coocc","prob_min","cycle_break_method","timestamp","n_vertices_raw","n_edges_raw","n_vertices_dag","n_edges_dag","mode"
+"COAD2",12323,253,0,2054,"mrm",0.02,1,0.02,"feedback_arc_set","2025-12-07 20:06:58.049393",12323,42441095,12323,42441095,"coad"

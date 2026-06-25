@@ -1,4 +1,9 @@
-## Graph generation (COAD / DFCI / MGI / CSV)
+# Authors:
+#   Marmar Moussa, School of Computer Science and Stephenson School of 
+#       Biomedical Engineering, University of Oklahoma, Norman, OK, USA
+#   Collin Sumrell, School of Computer Science, University of Oklahoma, Norman, OK, USA
+
+# Graph generation (COAD / DFCI / MGI / CSV)
 ## - COAD (from Auslander et al. github repo) uses (data, genes, samples) = (2,1,3)
 ## - DFCI, MGI (from Auslander et al. github repo) use (3,2,1)
 ## - Modes: "coad", "coad_dfci_mgi", "csv"

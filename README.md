@@ -1,183 +1,206 @@
 # Mutation Prediction
 
-This project implements mutation prediction using sequence models (LSTM and dilated CNN) on directed acyclic graphs (DAGs) constructed from gene mutation co-occurrence patterns.
+This repository contains the raw-data preparation, graph construction, bootstrap consensus graph, sequence-model evaluation, and figure-generation code used for the paper.
 
-## Overview
+Run commands from the repository root unless a script says otherwise.
 
-The pipeline consists of two main stages:
-
-1. **Graph Generation** (`graph_generation.R`), which constructs a DAG from mutation data using conditional probability-based edge weights
-2. **Mutation Prediction** (`mutation_prediction.py`), which trains sequence models to predict gene mutations based on predecessor mutations in the DAG
-
----
+The full path is raw cBioPortal study data -> binarized per-study matrices -> `study_data/combined_union.csv` -> graph construction -> mutation-prediction models -> figures. The bootstrap consensus graph uses `bootstrap/coad2(in).csv` and the scripts in `bootstrap/`.
 
 ## Data
 
-### Combined Union Dataset
+`data_preparation/` contains the raw cBioPortal study folders and the scripts needed to regenerate the combined and subset matrices.
 
-The primary dataset used in this project is `combined_union.csv`, which contains mutation data with genes as rows and samples as columns. This dataset consolidates samples from 9 major colorectal cancer studies.
+`study_data/` contains the prepared matrices used by the graph and model pipeline:
 
-> Note: `combined_union.csv` is too large to include directly in the repository. It is provided as a compressed file (`combined_union.csv.zip`). You should unzip it before running the pipeline.
+- `COAD2.mat`, `DFCI2.mat`, `MGI2.mat`: Auslander-style matrices.
+- `combined_union.csv.zip`: compressed 9-study mutation matrix. Unzip this to create `study_data/combined_union.csv` before primary graph/model runs.
+- `stage_i.csv`, `stage_ii.csv`, `stage_iii.csv`, `stage_iv.csv`, `stage_unknown.csv`, `staged_only.csv`: stage-stratified matrices.
+- `louvain_largest_community.csv`, `louvain_second_largest_community.csv`: community subset matrices.
 
-**Datasets included in `combined_union.csv`:**
+Unzip `study_data/combined_union.csv.zip` before running workflows that read `study_data/combined_union.csv`.
 
-- coadread_dfci_2016 - Giannakis et al. (2016). Genomic Correlates of Immune-Cell Infiltrates in Colorectal Carcinoma. Cell Reports.
-- coad_tcga_gdc - Heath et al. (2021). The NCI Genomic Data Commons. Nature Genetics.
-- coad_cptac_gdc - Heath et al. (2021). The NCI Genomic Data Commons. Nature Genetics.
-- coadread_tcga_pan_can_atlas_2018 - Heath et al. (2021). The NCI Genomic Data Commons. Nature Genetics.
-- coad_silu_2022 - Roelands et al. (2023). An integrated tumor, immune and microbiome atlas of colon cancer. Nature Medicine.
-- coadread_cass_2020 - Li et al. (2020). Integrated Omics of Metastatic Colorectal Cancer. Cancer Cell.
-- coad_cptac_2019 - Vasaikar et al. (2019). Proteogenomic Analysis of Human Colon Cancer. Cell.
-- coad_tcga_pub - Cancer Genome Atlas Network (2012). Comprehensive molecular characterization of human colon and rectal cancer. Nature.
-- coadread_genentech - Seshagiri et al. (2012). Recurrent R-spondin fusions in colon cancer. Nature.
+## Raw Data Preparation
 
-### COAD2, DFCI2, MGI2 (.mat files)
-
-The `.mat` files located in `study_data/` are pre-processed matrices derived from the study by Auslander et al. (2019):
-
-- Auslander, N., Wolf, Y. I., & Koonin, E. V. (2019). In silico learning of tumor evolution through mutational time series. Proceedings of the National Academy of Sciences.
-
----
-
-## Graph Generation (`graph_generation.R`)
-
-Constructs a directed graph from mutation co-occurrence data using asymmetric conditional probabilities.
-
-### Key Parameters
-
-| Parameter        | Default | Description                                          |
-| ---------------- | ------- | ---------------------------------------------------- |
-| `USE_MODE`       | `"csv"` | Data source: `"coad"`, `"coad_dfci_mgi"`, or `"csv"` |
-| `THRESHOLD_DIFF` | `0.02`  | Minimum \|P(i\|j) - P(j\|i)\| for edge inclusion     |
-| `MIN_COOCC`      | `1`     | Minimum co-occurrence count (c11)                    |
-| `PROB_MIN`       | `0.02`  | Floor for conditional probabilities                  |
-
-### Outputs
-
-Results are saved to `outputs/<TAG>/`:
-
-- `graph_raw_<TAG>.rds` — Original directed graph (may contain cycles)
-- `graph_dag_<TAG>.rds` — DAG after cycle removal
-- `edges_<TAG>.csv` — Edge list with weights
-- `longest_path_edges_<TAG>.txt` — Longest path (unweighted, by edge count)
-- `longest_path_weighted_<TAG>.txt` — Longest path (weighted by `w_diff`)
-- `topo_order_<TAG>.txt` — Topological ordering of the DAG
-
-### Usage
-
-```r
-# Edit configuration at top of script, then:
-source("graph_generation.R")
-```
-
-Ensure necessary packages are installed in your environment.
-
----
-
-## Mutation Prediction (`mutation_prediction.py`)
-
-Trains LSTM or dilated CNN models to predict whether a gene is mutated, given the mutation status of its predecessors in the DAG.
-
-### Key Arguments
-
-| Argument               | Default              | Description                                                        |
-| ---------------------- | -------------------- | ------------------------------------------------------------------ |
-| `--tag`                | (required)           | Run identifier; outputs saved to `outputs/<TAG>/`                  |
-| `--lp_txt`             | (required)           | Path to longest path genes file                                    |
-| `--topo_txt`           | (required)           | Path to topological order file                                     |
-| `--combined_csv`       | `combined_union.csv` | Mutation matrix (genes × samples)                                  |
-| `--mode`               | `coad_vs_dfci_mgi`   | Data mode: `coad_vs_dfci_mgi`, `old_80_20`, `newcsv_80_20`         |
-| `--context`            | `full`               | `full` (all TOPO predecessors) or `lp_only` (LP predecessors only) |
-| `--model_type`         | `lstm`               | Model architecture: `lstm` or `dilated_cnn`                        |
-| `--lstm_units`         | `5`                  | Number of LSTM units                                               |
-| `--cnn_filters`        | `32`                 | Number of CNN filters                                              |
-| `--cnn_dilation_rates` | `1,2,4`              | Dilation rates for CNN                                             |
-| `--epochs`             | `10`                 | Training epochs                                                    |
-| `--batch_size`         | `27`                 | Batch size                                                         |
-| `--seed`               | `123`                | Random seed for reproducibility                                    |
-| `--tune_threshold`     | `False`              | Tune classification threshold per gene                             |
-
-### Outputs
-
-Results are saved to `outputs/<TAG>/`:
-
-- `models/model_t_<k>.keras` — Trained model for each LP gene
-- `accuracy_matrix.npy` — Per-gene, per-sample prediction correctness
-- `confusion_matrix.csv` / `standard_confusion_matrix.csv` — Confusion matrices
-- `metrics_table.csv` / `standard_metrics_table.csv` — Performance metrics including AUC
-- `run_summary.json` — Full run configuration and results
-- `split_indices.pkl` — Train/test split indices
-
-### Example Usage
+Skip this section if using the prepared files already in `study_data/`. To rebuild from the raw study folders, run the preprocessing scripts from `data_preparation/`:
 
 ```bash
-# Basic LSTM run with CSV data
-python mutation_prediction.py \
-    --tag CSV_* \
-    --lp_txt outputs/CSV_*/longest_path_weighted_*.txt \
-    --topo_txt outputs/CSV_*/topo_order_*.txt \
-    --combined_csv combined_union.csv \
-    --mode newcsv_80_20 \
-    --context full
-
-# Dilated CNN
-python mutation_prediction.py \
-    --tag cnn_experiment \
-    --lp_txt outputs/CSV_*/longest_path_weighted_*.txt \
-    --topo_txt outputs/CSV_*/topo_order_*.txt \
-    --model_type dilated_cnn \
-    --cnn_filters 64 \
-    --epochs 50
-
-# Evaluation only (no training)
-python mutation_prediction.py \
-    --tag eval_run \
-    --lp_txt ... \
-    --topo_txt ... \
-    --eval_only
+cd data_preparation
+python3 binarize_mutations.py
+python3 combine_matrices.py
+python3 create_clustered_datasets.py
+python3 jaccard_cluster_vs_stage.py
+python3 pca_louvain_cluster.py
+python3 pca_louvain_nofilter.py
+python3 extract_louvain.py
+cd ..
 ```
 
----
+This produces:
+
+- `data_preparation/combined_union.csv`
+- `data_preparation/clustered_datasets/by_stage/*.csv`
+- `data_preparation/louvain_largest_community.csv`
+- `data_preparation/louvain_second_largest_community.csv`
+- clustering/statistics outputs under `data_preparation/clustered_datasets/`
+
+`jaccard_cluster_vs_stage.py` writes both the full-gene and 5% gene-frequency
+Jaccard stage-clustering summaries.
+
+To run the graph and model code from the regenerated files, place the generated matrices in `study_data/`:
+
+```bash
+cp data_preparation/combined_union.csv study_data/combined_union.csv
+cp data_preparation/clustered_datasets/by_stage/*.csv study_data/
+cp data_preparation/louvain_largest_community.csv study_data/
+cp data_preparation/louvain_second_largest_community.csv study_data/
+```
+
+## Primary Graph
+
+Edit the configuration block at the top of `graph_generation.R`, then run:
+
+```bash
+Rscript graph_generation.R
+```
+
+Important settings:
+
+- `USE_MODE <- "csv"` for `study_data/combined_union.csv`.
+- `THRESHOLD_DIFF <- 0.02`
+- `MIN_COOCC <- 1`
+- `PROB_MIN <- 0.02`
+- `CYCLE_BREAK_METHOD <- "feedback_arc_set"`
+
+Primary outputs are written under `outputs/<TAG>/`:
+
+- `graph_raw_<TAG>.rds`
+- `graph_dag_<TAG>.rds`
+- `edges_<TAG>.csv`
+- `longest_path_edges_<TAG>.txt`
+- `longest_path_weighted_<TAG>.txt`
+- `topo_order_<TAG>.txt`
+- `meta_<TAG>.csv`
+
+Large graph objects and edge lists are generated outputs.
+
+## Bootstrap T=103 Graph
+
+The bootstrap workflow is documented in `bootstrap/README.md`. The source scripts are:
+
+- `bootstrap/CreateBootstrapDatasets.R`
+- `bootstrap/create_bootstrap_graph.R`
+- `bootstrap/minimum_t.R`
+
+Run:
+
+```bash
+Rscript bootstrap/CreateBootstrapDatasets.R
+Rscript bootstrap/create_bootstrap_graph.R
+Rscript bootstrap/minimum_t.R
+```
+
+The bootstrap scripts generate resampled datasets, consensus edges, RDS graph files, and exported path files.
+
+## Mutation Prediction
+
+`mutation_prediction.py` trains and evaluates the LSTM, dilated CNN, and shared LSTM-attention models.
+
+Core arguments:
+
+- `--tag`: output tag under `outputs/<TAG>/`
+- `--lp_txt`: longest-path gene list (path from repo root to file)
+- `--topo_txt`: DAG topological order (path from repo root to file)
+- `--combined_csv`: gene x sample matrix for CSV mode (path from repo root to file)
+- `--mode newcsv_80_20`: 80/20 split on the supplied CSV (path from repo root to file)
+- `--context lp_only` or `--context full`
+- `--model_type lstm`, `dilated_cnn`, or `shared_lstm_attn`
+- `--tune_threshold --tune_metric f1`: validation-set threshold tuning
+- omit `--tune_threshold` or use eval-only copied models for fixed `0.5` threshold runs
+
+Example:
+
+```bash
+python mutation_prediction.py \
+  --tag paper_example_w_fullcontext_lstm_seed1 \
+  --lp_txt outputs/<GRAPH_TAG>/longest_path_weighted_<GRAPH_TAG>.txt \
+  --topo_txt outputs/<GRAPH_TAG>/topo_order_<GRAPH_TAG>.txt \
+  --combined_csv study_data/combined_union.csv \
+  --mode newcsv_80_20 \
+  --context full \
+  --model_type lstm \
+  --lstm_units 5 \
+  --epochs 10 \
+  --batch_size 27 \
+  --seed 1 \
+  --macro_metrics \
+  --tune_threshold \
+  --tune_metric f1 \
+  --val_frac 0.2 \
+  --th_grid 0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75
+```
+
+Model files and metrics are generated under `outputs/<TAG>/`.
+
+The paper tables report mean and standard deviation across 15 random seeds.
+Run the same graph/model configuration once per seed, then summarize the
+per-seed metrics for the reported table values.
+
+## Figures
+
+Publication figure scripts:
+
+- `plot_graph_pathway.R`: graph/pathway visualization from saved graph RDS and path RDS/TXT artifacts.
+- `plot_mutation_heatmap.py`: mutation heatmap panels for path gene lists across the mutation matrix.
+
+Example heatmap command:
+
+```bash
+python plot_mutation_heatmap.py \
+  --data_csv study_data/combined_union.csv \
+  --lp_list outputs/<GRAPH_TAG>/longest_path_edges_<GRAPH_TAG>.txt \
+  --lp_list2 outputs/<GRAPH_TAG>/longest_path_weighted_<GRAPH_TAG>.txt \
+  --output outputs/<GRAPH_TAG>/figure_mutation_heatmap.pdf
+```
+
+The figure scripts save publication formats at multiple resolutions.
 
 ## Dependencies
 
-### R
+R packages:
 
 - `R.matlab`
 - `Matrix`
+- `data.table`
+- `future`
+- `progressr`
 - `igraph`
+- `dplyr`
+- `pbapply`
+- `ggplot2`
+- `ggraph`
+- `ggrepel`
+- `pheatmap`
+- `RColorBrewer`
+- `tidyverse`
 
-### Python
+Python packages:
 
 - `numpy`
 - `pandas`
 - `scipy`
 - `scikit-learn`
 - `tensorflow` / `keras`
+- `matplotlib`
+- `seaborn`
+- `networkx`
+- `python-louvain`
+- `igraph`
+- `leidenalg`
 
-Install Python dependencies:
+Install Python dependencies in a virtual environment:
 
 ```bash
-pip install numpy pandas scipy scikit-learn tensorflow
-```
-
-(Plus whatever else may come up if you still encounter errors. We'd recommend [doing the python parts of this in a venv](https://docs.python.org/3/library/venv.html), though you know what python workflow works best for you.)
-
----
-
-## Project Structure
-
-```
-MutationPrediction/
-├── mutation_prediction.py # Main prediction script
-├── graph_generation.R # Graph construction script
-├── study_data/ # .mat files (COAD2, DFCI2, MGI2) and CSV file
-└── outputs/ # Generated outputs by tag
-    └── <TAG>/
-        ├── models/
-        ├── graph_*.rds
-        ├── edges_*.csv
-        ├── longest_path_*.txt
-        ├── topo_order_*.txt
-        └── run_summary.json
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```

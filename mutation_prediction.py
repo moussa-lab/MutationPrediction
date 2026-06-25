@@ -1,3 +1,8 @@
+# Authors:
+#   Collin Sumrell, School of Computer Science, University of Oklahoma, Norman, OK, USA
+#   Marmar Moussa, School of Computer Science and Stephenson School of 
+#       Biomedical Engineering, University of Oklahoma, Norman, OK, USA
+
 import os, json, time, argparse, random
 from pathlib import Path
 from typing import List, Tuple, Optional
@@ -143,9 +148,11 @@ def build_lstm_model(n_timesteps, lstm_units=5, seed=123):
         1, activation="sigmoid", kernel_initializer=xavier, bias_initializer=zeros
     )(x)
     model = models.Model(inputs, outputs)
+    
     try:
         loss = losses.BinaryFocalCrossentropy()
     except Exception:
+        print("[warn] BinaryFocalCrossentropy not available, falling back to BinaryCrossentropy")
         loss = losses.BinaryCrossentropy()
     model.compile(
         optimizer="adam",
@@ -189,6 +196,101 @@ def build_dilated_cnn_model(n_timesteps, filters=32, kernel_size=3, dilation_rat
     )
     return model
 
+# Shared LSTM with attention gene embedding
+class _MaskedAttentionPool(layers.Layer):
+    def __init__(self, seed=123, **kwargs):
+        super().__init__(**kwargs)
+        self._seed = seed
+
+    def build(self, input_shape):
+        self.score_dense = layers.Dense(
+            1,
+            activation="tanh",
+            kernel_initializer=initializers.GlorotUniform(seed=self._seed),
+            bias_initializer="zeros",
+        )
+        super().build(input_shape)
+
+    def call(self, inputs, mask=None):
+        # inputs: (batch, T, units). mask: (batch, T) bool or None.
+        scores = self.score_dense(inputs)  # (batch, T, 1)
+        if mask is not None:
+            mask_f = tf.cast(mask, scores.dtype)[:, :, tf.newaxis]  # (batch, T, 1)
+            scores = scores + (1.0 - mask_f) * -1e9
+        weights = tf.nn.softmax(scores, axis=1)  # (batch, T, 1)
+        return tf.reduce_sum(inputs * weights, axis=1)  # (batch, units)
+
+    # don't propagate mask past the pool
+    def compute_mask(self, inputs, mask=None):
+        return None
+
+    def get_config(self):
+        config = super().get_config()
+        config["seed"] = self._seed
+        return config
+
+
+def build_shared_lstm_attention_model(
+    max_timesteps,
+    num_genes,
+    lstm_units=16,
+    gene_emb_dim=8,
+    dropout_rate=0.3,
+    mask_value=-1.0,
+    seed=123,
+):
+    # One shared LSTM encoder + attention pool + gene embedding
+    xavier = initializers.GlorotUniform(seed=seed)
+    ortho = initializers.Orthogonal(seed=seed)
+    zeros = initializers.Zeros()
+
+    seq_input = layers.Input(shape=(max_timesteps, 1), name="sequence")
+    gene_input = layers.Input(shape=(), dtype="int32", name="gene_id")
+
+    # Masking: any timestep whose features all equal mask_value is treated as
+    # padding and skipped by the LSTM.  Using a sentinel outside {0,1} so real
+    # data isnt affected
+    x = layers.Masking(mask_value=mask_value)(seq_input)
+
+    x = layers.LSTM(
+        units=lstm_units,
+        return_sequences=True,  # need per timestep outputs for attention pool
+        kernel_initializer=xavier,
+        recurrent_initializer=ortho,
+        bias_initializer=zeros,
+    )(x)
+
+    context = _MaskedAttentionPool(seed=seed)(x)
+
+    gene_vec = layers.Embedding(
+        input_dim=num_genes,
+        output_dim=gene_emb_dim,
+        embeddings_initializer=initializers.GlorotUniform(seed=seed + 1),
+        name="gene_embedding",
+    )(gene_input)
+
+    h = layers.Concatenate()([context, gene_vec])
+    h = layers.Dropout(dropout_rate, seed=seed + 2)(h)
+    outputs = layers.Dense(
+        1,
+        activation="sigmoid",
+        kernel_initializer=xavier,
+        bias_initializer=zeros,
+    )(h)
+
+    model = models.Model([seq_input, gene_input], outputs)
+
+    try:
+        loss = losses.BinaryFocalCrossentropy()
+    except Exception:
+        loss = losses.BinaryCrossentropy()
+    model.compile(
+        optimizer="adam",
+        loss=loss,
+        metrics=["accuracy", metrics.Recall(name="recall"), metrics.Precision(name="precision")],
+    )
+    return model
+
 def build_model(
     n_timesteps,
     model_type="lstm",
@@ -209,6 +311,77 @@ def build_model(
             seed=seed,
         )
     raise ValueError(f"Unknown model_type: {model_type}")
+
+# Dataset assembly for the shared model
+def build_shared_dataset(
+    combined_topo: np.ndarray,
+    lp: List[str],
+    lp_positions: List[int],
+    name_to_topo_pos: dict,
+    sample_indices: np.ndarray,
+    context_mode: str,
+    max_T_override: Optional[int] = None,
+    mask_value: float = -1.0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    # Pool all (gene, sample) pairs into one big dataset.
+    # X_seq: (n_pairs, max_T, 1) float32, right-padded with mask_value
+    # gene_ids: (n_pairs,) int32, values in [0, K)
+    # y: (n_pairs,)
+    # max_T: the padded sequence length used
+
+    # If max_T_override is given (like to match a training-set max_T when
+    # building val/test), padding or truncation is applied to match that
+    
+    K = len(lp)
+
+    # figure out per-gene context length
+    per_gene_T = []
+    for k, gene in enumerate(lp):
+        pos = name_to_topo_pos[gene]
+        if context_mode == "full":
+            per_gene_T.append(pos)
+        else:  # lp_only
+            per_gene_T.append(k)
+
+    natural_max_T = max(per_gene_T) if per_gene_T else 0
+    max_T = max_T_override if max_T_override is not None else natural_max_T
+    if max_T == 0:
+        raise RuntimeError("No genes have any predecessors; shared model has nothing to train on.")
+
+    n_samples = len(sample_indices)
+    n_valid_genes = sum(1 for t in per_gene_T if t > 0)
+    total_rows = n_valid_genes * n_samples
+
+    X_seq = np.full((total_rows, max_T, 1), mask_value, dtype=np.float32)
+    gene_ids = np.empty((total_rows,), dtype=np.int32)
+    y = np.empty((total_rows,), dtype=np.float32)
+
+    row = 0
+    for k, gene in enumerate(lp):
+        T_k = per_gene_T[k]
+        if T_k == 0:
+            continue
+        pos = name_to_topo_pos[gene]
+        if context_mode == "full":
+            rows_sel = list(range(pos))
+        else:
+            rows_sel = lp_positions[:k]
+
+        # predecessor block: (T_k, n_samples) -> (n_samples, T_k)
+        block = combined_topo[rows_sel, :][:, sample_indices].T.astype(np.float32)
+        target = combined_topo[pos, sample_indices].astype(np.float32)
+
+        # left-align real data so timestep 0 = earliest predecessor, matching
+        # how the per-gene models take in the same data
+        T_write = min(T_k, max_T)
+        X_seq[row:row + n_samples, :T_write, 0] = block[:, :T_write]
+        gene_ids[row:row + n_samples] = k
+        y[row:row + n_samples] = target
+        row += n_samples
+
+    assert row == total_rows, f"row accounting mismatch: {row} vs {total_rows}"
+    return X_seq, gene_ids, y, max_T
+
 
 # Metrics helpers
 # first one was an older style of calculating it from an accuracy matrix rather than direct preds
@@ -312,6 +485,13 @@ def f1_from_cm(cm):
     rec = _safe_div(TP, TP + FN)
     return _safe_div(2 * prec * rec, prec + rec)
 
+def mcc_from_cm(cm):
+    TP, FN = cm[0, 0], cm[0, 1]
+    FP, TN = cm[1, 0], cm[1, 1]
+    num = (TP * TN - FP * FN)
+    den = (TP + FP) * (TP + FN) * (TN + FP) * (TN + FN)
+    return num / np.sqrt(den) if den else 0.0
+
 
 # ---------------------------
 # Misc
@@ -387,11 +567,24 @@ def main():
     )
 
     # model architecture
-    ap.add_argument("--model_type", choices=["lstm", "dilated_cnn"], default="lstm")
+    ap.add_argument(
+        "--model_type",
+        choices=["lstm", "dilated_cnn", "shared_lstm_attn"],
+        default="lstm",
+    )
     ap.add_argument("--lstm_units", type=int, default=5)
     ap.add_argument("--cnn_filters", type=int, default=32)
     ap.add_argument("--cnn_kernel_size", type=int, default=3)
     ap.add_argument("--cnn_dilation_rates", type=str, default="1,2,4")
+
+    # shared-model knobs (only used when --model_type shared_lstm_attn)
+    ap.add_argument("--shared_lstm_units", type=int, default=16,
+                    help="LSTM units for the shared encoder. Larger than the per-gene LSTM since it sees 75x more data.")
+    ap.add_argument("--shared_gene_emb_dim", type=int, default=8,
+                    help="Dimension of the learned gene-identity embedding.")
+    ap.add_argument("--shared_dropout", type=float, default=0.3)
+    ap.add_argument("--shared_mask_value", type=float, default=-1.0,
+                    help="Padding sentinel. Must be outside the real data range (real values are 0/1).")
 
     # early stopping
     ap.add_argument("--early_stopping", action="store_true")
@@ -416,6 +609,9 @@ def main():
         default=None,
         help="Path to a prior run_summary.json to reuse per-gene thresholds (recommended for real->null eval runs).",
     )
+
+    # extra eval outputs
+    ap.add_argument("--macro_metrics", action="store_true")
 
     # coverage checks
     ap.add_argument("--min_topo_coverage", type=float, default=0.95)
@@ -583,7 +779,7 @@ def main():
     )
 
     # -------------------------
-    # TRAIN/EVAL per LP target
+    # TRAIN/EVAL
     # -------------------------
     ths = np.array([float(x) for x in args.th_grid.split(",")], dtype=np.float32)
 
@@ -596,64 +792,75 @@ def main():
     pooled_prob = []
     pooled_true = []
 
+    # macro
+    per_gene_cm = []
     per_gene_thresholds = []
 
     cnn_dilation_rates = tuple(int(x) for x in args.cnn_dilation_rates.split(","))
 
-    for k, gene in enumerate(lp):
-        pos = name_to_topo_pos[gene]
 
-        # targets
-        y_tr_fit = combined_topo[pos, train_fit_indices].astype(np.float32)
-        y_te = combined_topo[pos, test_indices].astype(np.float32)
-        yte_rows.append(y_te.astype(np.int8))
+    # shared model (one LSTM + attention + gene embedding for all genes)
+    if args.model_type == "shared_lstm_attn":
+        print(f"[info] Building shared LSTM+attention dataset (context={args.context})")
 
-        if thresholds_external is None and args.tune_threshold:
-            y_val = combined_topo[pos, val_indices].astype(np.float32)
-        else:
-            y_val = None
+        X_tr_seq, g_tr, y_tr, max_T = build_shared_dataset(
+            combined_topo, lp, lp_positions, name_to_topo_pos,
+            train_fit_indices, args.context, mask_value=args.shared_mask_value,
+        )
+        print(f"[info] shared train: {X_tr_seq.shape[0]} (gene,sample) pairs, max_timesteps={max_T}")
 
-        # choose context rows
-        if args.context == "full":
-            T_now = pos
-            if T_now == 0:
-                # no baseline model for zero predecessors
-                per_gene_thresholds.append(0.5 if thresholds_external is None else float(thresholds_external[k]) if k < len(thresholds_external) else 0.5)
-                continue
-            X_tr_2d = combined_topo[:pos, :][:, train_fit_indices]
-            X_te_2d = combined_topo[:pos, :][:, test_indices]
-            X_val_2d = combined_topo[:pos, :][:, val_indices] if (y_val is not None) else None
-        else:
-            T_now = k
-            if T_now == 0:
-                per_gene_thresholds.append(0.5 if thresholds_external is None else float(thresholds_external[k]) if k < len(thresholds_external) else 0.5)
-                continue
-            rows_sel = lp_positions[:k]
-            X_tr_2d = combined_topo[rows_sel, :][:, train_fit_indices]
-            X_te_2d = combined_topo[rows_sel, :][:, test_indices]
-            X_val_2d = combined_topo[rows_sel, :][:, val_indices] if (y_val is not None) else None
-
-        x_tr = array3_from_2d(X_tr_2d)
-        x_te = array3_from_2d(X_te_2d)
-        x_val = array3_from_2d(X_val_2d) if (X_val_2d is not None) else None
-
-        model_path = MODELS_DIR / f"model_t_{k+1}.keras"
-
-        # load or train
-        if (not args.retrain) and model_path.exists():
-            model = keras.models.load_model(model_path)
-        else:
-            if args.eval_only:
-                raise RuntimeError(f"--eval_only set, but missing model file: {model_path}")
-            model = build_model(
-                T_now,
-                model_type=args.model_type,
-                lstm_units=args.lstm_units,
-                cnn_filters=args.cnn_filters,
-                cnn_kernel_size=args.cnn_kernel_size,
-                cnn_dilation_rates=cnn_dilation_rates,
-                seed=SEED + (k + 1),
+        if val_indices is not None:
+            X_val_seq, g_val, y_val, _ = build_shared_dataset(
+                combined_topo, lp, lp_positions, name_to_topo_pos,
+                val_indices, args.context,
+                max_T_override=max_T, mask_value=args.shared_mask_value,
             )
+            print(f"[info] shared val:   {X_val_seq.shape[0]} pairs")
+        else:
+            X_val_seq = g_val = y_val = None
+
+        X_te_seq, g_te, y_te_flat, _ = build_shared_dataset(
+            combined_topo, lp, lp_positions, name_to_topo_pos,
+            test_indices, args.context,
+            max_T_override=max_T, mask_value=args.shared_mask_value,
+        )
+        print(f"[info] shared test:  {X_te_seq.shape[0]} pairs")
+
+        model_path = MODELS_DIR / "shared_model.keras"
+
+        model = None
+        if (not args.retrain) and model_path.exists():
+            try:
+                model = keras.models.load_model(
+                    model_path,
+                    custom_objects={"_MaskedAttentionPool": _MaskedAttentionPool},
+                )
+                # check sequence-input shape still matches
+                try:
+                    expected_T = model.input_shape[0][1]
+                except Exception:
+                    expected_T = None
+                if expected_T is not None and expected_T != max_T:
+                    print(f"[warn] Stale shared model: expected T={expected_T}, need {max_T}. Retraining.")
+                    del model
+                    model = None
+            except Exception as e:
+                print(f"[warn] Could not load shared model ({e}); retraining.")
+                model = None
+
+        if model is None:
+            if args.eval_only:
+                raise RuntimeError(f"--eval_only set, but missing shared model: {model_path}")
+            model = build_shared_lstm_attention_model(
+                max_timesteps=max_T,
+                num_genes=K,
+                lstm_units=args.shared_lstm_units,
+                gene_emb_dim=args.shared_gene_emb_dim,
+                dropout_rate=args.shared_dropout,
+                mask_value=args.shared_mask_value,
+                seed=SEED,
+            )
+            model.summary(print_fn=lambda s: print(f"[model] {s}"))
 
             fit_callbacks = []
             if args.early_stopping:
@@ -668,52 +875,211 @@ def main():
                 )
 
             model.fit(
-                x_tr,
-                y_tr_fit,
+                {"sequence": X_tr_seq, "gene_id": g_tr},
+                y_tr,
                 epochs=args.epochs,
                 batch_size=args.batch_size,
                 verbose=1,
-                shuffle=False,
+                shuffle=True,
                 validation_split=args.validation_split if args.early_stopping else 0.0,
                 callbacks=fit_callbacks if fit_callbacks else None,
             )
             model.save(model_path, include_optimizer=True)
 
-        # predict
-        preds = model.predict(x_te, verbose=0).reshape(-1)
+        # predict once on all test pairs
+        preds_te_all = model.predict(
+            {"sequence": X_te_seq, "gene_id": g_te}, verbose=0, batch_size=256
+        ).reshape(-1)
 
-        # threshold selection
-        if thresholds_external is not None:
-            th = float(thresholds_external[k]) if k < len(thresholds_external) else 0.5
-        elif args.tune_threshold:
-            preds_val = model.predict(x_val, verbose=0).reshape(-1)
-            best_th, best_score = 0.5, -1.0
-            for cand in ths:
-                cls = (preds_val > cand).astype(np.int8)
-                cmv = standard_confusion_from_preds(cls, y_val.astype(np.int8))
-                score = ba_from_cm(cmv) if args.tune_metric == "ba" else f1_from_cm(cmv)
-                if score > best_score:
-                    best_score = score
-                    best_th = float(cand)
-            th = best_th
-        else:
-            th = 0.5
+        # predict on val pairs if we need per-gene threshold tuning
+        preds_val_all = None
+        if args.tune_threshold and thresholds_external is None and X_val_seq is not None:
+            preds_val_all = model.predict(
+                {"sequence": X_val_seq, "gene_id": g_val}, verbose=0, batch_size=256
+            ).reshape(-1)
 
-        per_gene_thresholds.append(th)
+        # loop per gene to keep reporting structure identical to per-gene runs
+        for k, gene in enumerate(lp):
+            pos = name_to_topo_pos[gene]
+            T_k = pos if args.context == "full" else k
+            y_te = combined_topo[pos, test_indices].astype(np.int8)
+            yte_rows.append(y_te)
 
-        pred_cls = (preds > th).astype(np.int8)
+            if T_k == 0:
+                per_gene_thresholds.append(
+                    0.5 if thresholds_external is None
+                    else (float(thresholds_external[k]) if k < len(thresholds_external) else 0.5)
+                )
+                continue
 
-        # accuracy-matrix (your convention)
-        acc_vec = (pred_cls == y_te.astype(np.int8)).astype(np.int8)
-        accuracy_matrix[k, :] = acc_vec
+            te_mask = (g_te == k)
+            preds_k = preds_te_all[te_mask]
 
-        # pooled (main)
-        pooled_pred.append(pred_cls)
-        pooled_prob.append(preds.astype(np.float32))
-        pooled_true.append(y_te.astype(np.int8))
+            # threshold selection
+            if thresholds_external is not None:
+                th = float(thresholds_external[k]) if k < len(thresholds_external) else 0.5
+            elif preds_val_all is not None:
+                v_mask = (g_val == k)
+                y_val_k = y_val[v_mask].astype(np.int8)
+                preds_val_k = preds_val_all[v_mask]
+                best_th, best_score = 0.5, -1.0
+                for cand in ths:
+                    cls = (preds_val_k > cand).astype(np.int8)
+                    cmv = standard_confusion_from_preds(cls, y_val_k)
+                    score = ba_from_cm(cmv) if args.tune_metric == "ba" else f1_from_cm(cmv)
+                    if score > best_score:
+                        best_score = score
+                        best_th = float(cand)
+                th = best_th
+            else:
+                th = 0.5
 
-        # cleanup
-        del model, x_tr, x_te, preds, pred_cls, acc_vec
+            per_gene_thresholds.append(th)
+            pred_cls = (preds_k > th).astype(np.int8)
+
+            acc_vec = (pred_cls == y_te).astype(np.int8)
+            accuracy_matrix[k, :] = acc_vec
+
+            pooled_pred.append(pred_cls)
+            pooled_prob.append(preds_k.astype(np.float32))
+            pooled_true.append(y_te)
+
+            cmk = standard_confusion_from_preds(pred_cls, y_te)
+            per_gene_cm.append(cmk)
+
+        del model
+
+    # per-gene models
+    else:
+        for k, gene in enumerate(lp):
+            pos = name_to_topo_pos[gene]
+
+            # targets
+            y_tr_fit = combined_topo[pos, train_fit_indices].astype(np.float32)
+            y_te = combined_topo[pos, test_indices].astype(np.float32)
+            yte_rows.append(y_te.astype(np.int8))
+
+            if thresholds_external is None and args.tune_threshold:
+                y_val_target = combined_topo[pos, val_indices].astype(np.float32)
+            else:
+                y_val_target = None
+
+            # choose context rows
+            if args.context == "full":
+                T_now = pos
+                if T_now == 0:
+                    per_gene_thresholds.append(
+                        0.5 if thresholds_external is None
+                        else (float(thresholds_external[k]) if k < len(thresholds_external) else 0.5)
+                    )
+                    continue
+                X_tr_2d = combined_topo[:pos, :][:, train_fit_indices]
+                X_te_2d = combined_topo[:pos, :][:, test_indices]
+                X_val_2d = combined_topo[:pos, :][:, val_indices] if (y_val_target is not None) else None
+            else:
+                T_now = k
+                if T_now == 0:
+                    per_gene_thresholds.append(
+                        0.5 if thresholds_external is None
+                        else (float(thresholds_external[k]) if k < len(thresholds_external) else 0.5)
+                    )
+                    continue
+                rows_sel = lp_positions[:k]
+                X_tr_2d = combined_topo[rows_sel, :][:, train_fit_indices]
+                X_te_2d = combined_topo[rows_sel, :][:, test_indices]
+                X_val_2d = combined_topo[rows_sel, :][:, val_indices] if (y_val_target is not None) else None
+
+            x_tr = array3_from_2d(X_tr_2d)
+            x_te = array3_from_2d(X_te_2d)
+            x_val = array3_from_2d(X_val_2d) if (X_val_2d is not None) else None
+
+            model_path = MODELS_DIR / f"model_t_{k+1}.keras"
+
+            # load or train
+            model = None
+            if (not args.retrain) and model_path.exists():
+                model = keras.models.load_model(model_path)
+                expected_timesteps = model.input_shape[1]
+                if expected_timesteps != T_now:
+                    print(f"[warn] Stale model {model_path}: expected {expected_timesteps} timesteps, need {T_now}. Retraining.")
+                    del model
+                    model = None
+
+            if model is None:
+                if args.eval_only:
+                    raise RuntimeError(f"--eval_only set, but missing/stale model file: {model_path}")
+                model = build_model(
+                    T_now,
+                    model_type=args.model_type,
+                    lstm_units=args.lstm_units,
+                    cnn_filters=args.cnn_filters,
+                    cnn_kernel_size=args.cnn_kernel_size,
+                    cnn_dilation_rates=cnn_dilation_rates,
+                    seed=SEED + (k + 1),
+                )
+
+                fit_callbacks = []
+                if args.early_stopping:
+                    fit_callbacks.append(
+                        callbacks.EarlyStopping(
+                            monitor="val_loss",
+                            patience=args.early_stopping_patience,
+                            min_delta=args.early_stopping_min_delta,
+                            restore_best_weights=True,
+                            verbose=1,
+                        )
+                    )
+
+                model.fit(
+                    x_tr,
+                    y_tr_fit,
+                    epochs=args.epochs,
+                    batch_size=args.batch_size,
+                    verbose=1,
+                    shuffle=False,
+                    validation_split=args.validation_split if args.early_stopping else 0.0,
+                    callbacks=fit_callbacks if fit_callbacks else None,
+                )
+                model.save(model_path, include_optimizer=True)
+
+            # predict
+            preds = model.predict(x_te, verbose=0).reshape(-1)
+
+            # threshold selection
+            if thresholds_external is not None:
+                th = float(thresholds_external[k]) if k < len(thresholds_external) else 0.5
+            elif args.tune_threshold:
+                preds_val = model.predict(x_val, verbose=0).reshape(-1)
+                best_th, best_score = 0.5, -1.0
+                for cand in ths:
+                    cls = (preds_val > cand).astype(np.int8)
+                    cmv = standard_confusion_from_preds(cls, y_val_target.astype(np.int8))
+                    score = ba_from_cm(cmv) if args.tune_metric == "ba" else f1_from_cm(cmv)
+                    if score > best_score:
+                        best_score = score
+                        best_th = float(cand)
+                th = best_th
+            else:
+                th = 0.5
+
+            per_gene_thresholds.append(th)
+
+            pred_cls = (preds > th).astype(np.int8)
+
+            # accuracy-matrix
+            acc_vec = (pred_cls == y_te.astype(np.int8)).astype(np.int8)
+            accuracy_matrix[k, :] = acc_vec
+
+            # pooled (main)
+            pooled_pred.append(pred_cls)
+            pooled_prob.append(preds.astype(np.float32))
+            pooled_true.append(y_te.astype(np.int8))
+
+            cmk = standard_confusion_from_preds(pred_cls, y_te.astype(np.int8))
+            per_gene_cm.append(cmk)
+
+            # cleanup
+            del model, x_tr, x_te, preds, pred_cls, acc_vec
 
     # Test labels by LP row
     TestSetLP = np.vstack(yte_rows) if len(yte_rows) == K else np.array(yte_rows, dtype=np.int8)
@@ -721,7 +1087,7 @@ def main():
     # save accuracy matrix
     np.save(BASE_DIR / "accuracy_matrix.npy", accuracy_matrix)
 
-    # custom metrics (accuracy-matrix convention)
+    # custom metrics
     cm_custom = confusion_from_accuracy_matrix(accuracy_matrix, TestSetLP)
     metrics_custom = metrics_table_from_confusion(cm_custom)
     pd.DataFrame(
@@ -733,6 +1099,7 @@ def main():
 
     # standard pooled metrics
     auc_score = None
+    macro = None
     if pooled_true:
         pooled_pred_all = np.concatenate(pooled_pred, axis=0)
         pooled_prob_all = np.concatenate(pooled_prob, axis=0)
@@ -757,6 +1124,17 @@ def main():
             columns=["Pred_Positive", "Pred_Negative"],
         ).to_csv(BASE_DIR / "standard_confusion_matrix.csv")
         metrics_std.to_csv(BASE_DIR / "standard_metrics_table.csv", index=False)
+
+        if args.macro_metrics and per_gene_cm:
+            macro = {
+                "macro_ba": float(np.mean([ba_from_cm(cm) for cm in per_gene_cm])),
+                "macro_f1": float(np.mean([f1_from_cm(cm) for cm in per_gene_cm])),
+                "macro_mcc": float(np.mean([mcc_from_cm(cm) for cm in per_gene_cm])),
+                "num_genes_in_macro": int(len(per_gene_cm)),
+            }
+            print(
+                f"[info] Macro: BA={macro['macro_ba']:.6f} F1={macro['macro_f1']:.6f} MCC={macro['macro_mcc']:.6f} over {macro['num_genes_in_macro']} genes"
+            )
     else:
         cm_std = np.array([[0, 0], [0, 0]], dtype=np.int64)
         metrics_std = pd.DataFrame({"Metric": [], "Value": []})
@@ -819,10 +1197,15 @@ def main():
     }
     if args.model_type == "lstm":
         model_config["lstm_units"] = args.lstm_units
-    else:
+    elif args.model_type == "dilated_cnn":
         model_config["cnn_filters"] = args.cnn_filters
         model_config["cnn_kernel_size"] = args.cnn_kernel_size
         model_config["cnn_dilation_rates"] = args.cnn_dilation_rates
+    elif args.model_type == "shared_lstm_attn":
+        model_config["shared_lstm_units"] = args.shared_lstm_units
+        model_config["shared_gene_emb_dim"] = args.shared_gene_emb_dim
+        model_config["shared_dropout"] = args.shared_dropout
+        model_config["shared_mask_value"] = args.shared_mask_value
 
     json_payload = {
         "tag": TAG,
@@ -850,6 +1233,7 @@ def main():
                     "rows": [dict(zip(metrics_std.columns, row)) for row in metrics_std.values],
                 },
                 "auc": auc_score,
+                "macro": macro,
                 "thresholds": per_gene_thresholds,
             },
         },
