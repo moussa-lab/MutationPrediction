@@ -6,7 +6,6 @@
 # ==============================================================================
 
 library(R.matlab)
-library(R.matlab)
 library(pheatmap)
 library(parallel)
 library(data.table)

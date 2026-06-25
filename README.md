@@ -1,14 +1,16 @@
 # Mutation Prediction
 
-This repository contains the graph construction, bootstrap consensus graph, sequence-model evaluation, and figure-generation code used for the paper.
+This repository contains the raw-data preparation, graph construction, bootstrap consensus graph, sequence-model evaluation, and figure-generation code used for the paper.
 
 Run commands from the repository root unless a script says otherwise.
 
-The primary graph-derived results use `study_data/combined_union.csv` after unzipping `study_data/combined_union.csv.zip`. The bootstrap consensus graph uses `bootstrap/coad2(in).csv` and the scripts in `bootstrap/`.
+The full path is raw cBioPortal study data -> binarized per-study matrices -> `study_data/combined_union.csv` -> graph construction -> mutation-prediction models -> figures. The bootstrap consensus graph uses `bootstrap/coad2(in).csv` and the scripts in `bootstrap/`.
 
 ## Data
 
-`study_data/` contains the source matrices and subset matrices used by the paper pipeline:
+`data_preparation/` contains the raw cBioPortal study folders and the scripts needed to regenerate the combined and subset matrices.
+
+`study_data/` contains the prepared matrices used by the graph and model pipeline:
 
 - `COAD2.mat`, `DFCI2.mat`, `MGI2.mat`: Auslander-style matrices.
 - `combined_union.csv.zip`: compressed 9-study mutation matrix. Unzip this to create `study_data/combined_union.csv` before primary graph/model runs.
@@ -16,6 +18,42 @@ The primary graph-derived results use `study_data/combined_union.csv` after unzi
 - `louvain_largest_community.csv`, `louvain_second_largest_community.csv`: community subset matrices.
 
 Unzip `study_data/combined_union.csv.zip` before running workflows that read `study_data/combined_union.csv`.
+
+## Raw Data Preparation
+
+Skip this section if using the prepared files already in `study_data/`. To rebuild from the raw study folders, run the preprocessing scripts from `data_preparation/`:
+
+```bash
+cd data_preparation
+python3 binarize_mutations.py
+python3 combine_matrices.py
+python3 create_clustered_datasets.py
+python3 jaccard_cluster_vs_stage.py
+python3 pca_louvain_cluster.py
+python3 pca_louvain_nofilter.py
+python3 extract_louvain.py
+cd ..
+```
+
+This produces:
+
+- `data_preparation/combined_union.csv`
+- `data_preparation/clustered_datasets/by_stage/*.csv`
+- `data_preparation/louvain_largest_community.csv`
+- `data_preparation/louvain_second_largest_community.csv`
+- clustering/statistics outputs under `data_preparation/clustered_datasets/`
+
+`jaccard_cluster_vs_stage.py` writes both the full-gene and 5% gene-frequency
+Jaccard stage-clustering summaries.
+
+To run the graph and model code from the regenerated files, place the generated matrices in `study_data/`:
+
+```bash
+cp data_preparation/combined_union.csv study_data/combined_union.csv
+cp data_preparation/clustered_datasets/by_stage/*.csv study_data/
+cp data_preparation/louvain_largest_community.csv study_data/
+cp data_preparation/louvain_second_largest_community.csv study_data/
+```
 
 ## Primary Graph
 
@@ -103,6 +141,10 @@ python mutation_prediction.py \
 
 Model files and metrics are generated under `outputs/<TAG>/`.
 
+The paper tables report mean and standard deviation across 15 random seeds.
+Run the same graph/model configuration once per seed, then summarize the
+per-seed metrics for the reported table values.
+
 ## Figures
 
 Publication figure scripts:
@@ -128,12 +170,16 @@ R packages:
 
 - `R.matlab`
 - `Matrix`
-- `igraph`
 - `data.table`
+- `future`
+- `progressr`
+- `igraph`
 - `dplyr`
+- `pbapply`
 - `ggplot2`
 - `ggraph`
 - `ggrepel`
+- `pheatmap`
 - `RColorBrewer`
 - `tidyverse`
 
@@ -146,11 +192,15 @@ Python packages:
 - `tensorflow` / `keras`
 - `matplotlib`
 - `seaborn`
+- `networkx`
+- `python-louvain`
+- `igraph`
+- `leidenalg`
 
 Install Python dependencies in a virtual environment:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install numpy pandas scipy scikit-learn tensorflow matplotlib seaborn
+pip install -r requirements.txt
 ```

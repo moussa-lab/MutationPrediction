@@ -28,6 +28,15 @@
 bootstrap/bootstrap_datasets/
 bootstrap/data/
 
+!data_preparation/
+!data_preparation/README.md
+!data_preparation/requirements.txt
+!data_preparation/*.py
+data_preparation/*.csv
+data_preparation/cluster_counts/
+data_preparation/clustered_datasets/
+data_preparation/study_data/
+
 
 # OS Files
 .DS_Store
